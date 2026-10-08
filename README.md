@@ -24,9 +24,18 @@ Import this project directly. Avoid copying its contents into an existing Godot 
 - **Right-click an object** to inspect it. **Right-click empty floor** or press **Esc** to clear an item or action selection and return to automatic interactions.
 - Optional **Look, Use, Talk** buttons choose a specific action. Click the active button again to return to automatic interactions. Keyboard: **1** automatic interaction, **2** Look, **3** Use, **4** Talk.
 - **Tab**: show hotspot hints. **I**: inventory hint.
+- **Sound** (bottom right) or **M**: adjust music, sound effects, and room ambience, or mute all audio. **Esc** closes sound options. Volume and mute preferences save automatically and survive restarting the game.
 - **F5**: save progress. **F9**: load progress. Use the on-screen controls to save, load, or start a new game too.
 
 There is one local save slot, stored in Godot's per-user application data directory rather than in the project folder. Starting a new game resets the current chapter; loading restores the saved progress.
+
+## Sound
+
+The chapter now includes an **original retro science-fiction soundtrack**, three looping room ambiences, and effects for footsteps, pickups, doors, terminals, inventory combinations, puzzle success, and saving/loading. Roger's footsteps stop while dialogue or sound options are open. Each room has its own score and ambience; changing rooms replaces the previous loops.
+
+These sounds evoke the synthesizer-era adventure-game feel. **They are newly created audio, not recordings or music extracted from Space Quest V.** The included music and effects were synthesized for this project without Sierra sound files. There is no voiced dialogue; advancing text plays a quiet interface cue.
+
+If you have actual sound recordings you want to use locally, matching WAV or OGG files in [`assets/audio/custom`](assets/audio/custom/README.md) override individual cues. Files not supplied continue using the included original audio. No game resource archives or emulator DLLs need to be copied into this Godot project.
 
 ## Walkthrough (spoilers)
 
@@ -40,14 +49,15 @@ There is one local save slot, stored in Godot's per-user application data direct
 
 ## Development and verification
 
-The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **88 passing integration checks**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
+The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **88 gameplay checks and 149 audio checks passing**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
 
 ```sh
 /path/to/Godot --headless --editor --path . --quit
 /path/to/Godot --headless --path . --script tests/smoke.gd
+/path/to/Godot --headless --audio-driver Dummy --path . --script tests/audio_smoke.gd
 ```
 
-Use a separate `XDG_DATA_HOME` directory when running the smoke test on Linux; it exercises the game's save slot. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. It also checks compatibility with earlier saves that granted the mop directly from the locker. Input checks send real mouse and keyboard events through the interface and world hotspots.
+Use a separate `XDG_DATA_HOME` directory when running either smoke test on Linux; they exercise the game's save slot and saved audio preferences. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. It also checks compatibility with earlier saves that granted the mop directly from the locker. Input checks send real mouse and keyboard events through the interface and world hotspots. The audio test additionally checks decoded WAV samples, room loop replacement, actual nonzero PCM from Godot's software mixer and silence while muted, alternating footsteps, real puzzle-event cues without duplicates, local sound overrides, saved volume/mute preferences, and modal input handling. Mixer capture verifies software playback; it does not test a physical speaker device.
 
 `tests/capture.gd` is an optional screenshot helper and requires a graphical display:
 
@@ -59,6 +69,6 @@ Capture room IDs are `diner`, `dock`, and `museum`. Omit `--output` to write `ca
 
 ## Current scope
 
-Included: three illustrated rooms, automatic floor walking and contextual object interactions, optional Look/Use/Talk actions, dialogue, world pickups, inventory selection and combination, a connected puzzle chain, blocked progression with hints, a chapter ending, and local save/load/new game.
+Included: three illustrated rooms, automatic floor walking and contextual object interactions, optional Look/Use/Talk actions, dialogue, world pickups, inventory selection and combination, a connected puzzle chain, blocked progression with hints, a chapter ending, local save/load/new game, room music and ambience, contextual sound effects, and persistent audio controls.
 
-Still to build: the remaining story locations, a full adventure finale, richer character animation, music and sound, voiced dialogue, death sequences, the burger minigame, and a tested standalone Windows export. The artwork is original and AI-assisted; character animation remains simpler than the backgrounds. This chapter provides a working basis for expanding and polishing the adventure.
+Still to build: the remaining story locations, a full adventure finale, richer character animation, a longer original score, voiced dialogue, death sequences, the burger minigame, and a tested standalone Windows export. The artwork is original and AI-assisted; character animation remains simpler than the backgrounds. This chapter provides a working basis for expanding and polishing the adventure.

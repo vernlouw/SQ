@@ -3,6 +3,7 @@ extends Node2D
 ## exposed through perform_action so the walkthrough can run without rendering.
 
 const SAVE_PATH := "user://the_mop_job_save.json"
+const AdventureAudio := preload("res://scripts/audio.gd")
 const VERBS := ["Look", "Use", "Talk"]
 const KEY_ACTIONS := ["Interact", "Look", "Use", "Talk"]
 const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM"}
@@ -73,8 +74,17 @@ var portrait: TextureRect
 var dialogue_lines: Array[String] = []
 var dialogue_speaker := ""
 var finale_panel: Panel
+var audio
+var sound_panel: Panel
+var sound_shade: ColorRect
+var sound_sliders: Dictionary = {}
+var sound_mute: CheckButton
+var sound_button: Button
 
 func _ready() -> void:
+	audio = AdventureAudio.new()
+	audio.name = "AdventureAudio"
+	add_child(audio)
 	for name in ["room_diner", "room_dock", "room_museum", "roger", "roger_walk", "cook", "guard", "portrait_roger", "portrait_cook", "portrait_guard", "portrait_clone"]:
 		var path: String = "res://assets/" + name + ".png"
 		if ResourceLoader.exists(path):
@@ -106,7 +116,11 @@ func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Ca
 	button.add_theme_stylebox_override("hover", _panel_style(Color("26465a"), Color("dbb671")))
 	button.add_theme_stylebox_override("pressed", _panel_style(Color("315972"), Color("dbb671")))
 	button.focus_mode = Control.FOCUS_NONE
-	button.pressed.connect(callback)
+	button.pressed.connect(func():
+		if sound_is_open() and parent == hud:
+			return
+		audio.play_sfx("ui_click")
+		callback.call())
 	parent.add_child(button)
 	return button
 
@@ -179,8 +193,83 @@ func _build_ui() -> void:
 	ending.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_button("Play again", Vector2(313, 197), Vector2(126, 25), func(): new_game(), finale_panel)
 	finale_panel.hide()
+	sound_button = _button("Sound", Vector2(577, 376), Vector2(50, 22), toggle_sound_panel)
+	sound_button.add_theme_font_size_override("font_size", 9)
+	sound_button.size = Vector2(50, 22)
+	sound_button.tooltip_text = "Music, effects and ambience — M"
+	_build_sound_panel()
+
+func _build_sound_panel() -> void:
+	sound_shade = ColorRect.new()
+	sound_shade.position = Vector2.ZERO
+	sound_shade.size = Vector2(640, 400)
+	sound_shade.color = Color(0, 0, 0, 0.55)
+	sound_shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	hud.add_child(sound_shade)
+	sound_panel = Panel.new()
+	sound_panel.position = Vector2(148, 111)
+	sound_panel.size = Vector2(344, 178)
+	sound_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	sound_panel.add_theme_stylebox_override("panel", _panel_style(Color("0c1c2a"), Color("dbb671"), 8))
+	sound_shade.add_child(sound_panel)
+	_label("SOUND", Vector2(16, 10), Vector2(254, 24), 15, sound_panel)
+	_button("Close", Vector2(276, 10), Vector2(54, 22), close_sound_panel, sound_panel)
+	var index := 0
+	for channel in ["music", "effects", "ambience"]:
+		var y := 44 + index * 30
+		_label(channel.capitalize(), Vector2(17, y), Vector2(92, 22), 12, sound_panel)
+		var slider := HSlider.new()
+		slider.position = Vector2(110, y + 2)
+		slider.size = Vector2(207, 19)
+		slider.min_value = 0.0
+		slider.max_value = 1.0
+		slider.step = 0.01
+		slider.value = audio.settings[channel]
+		slider.tooltip_text = channel.capitalize() + " volume"
+		slider.value_changed.connect(func(value: float): audio.set_volume(channel, value))
+		sound_panel.add_child(slider)
+		sound_sliders[channel] = slider
+		index += 1
+	sound_mute = CheckButton.new()
+	sound_mute.text = "Mute all"
+	sound_mute.position = Vector2(12, 135)
+	sound_mute.size = Vector2(131, 30)
+	sound_mute.add_theme_font_size_override("font_size", 11)
+	sound_mute.button_pressed = audio.settings["muted"]
+	sound_mute.toggled.connect(func(muted: bool): audio.set_muted(muted))
+	sound_panel.add_child(sound_mute)
+	_label("Esc closes • Settings saved automatically", Vector2(150, 143), Vector2(180, 16), 8, sound_panel)
+	sound_shade.hide()
+	sound_panel.hide()
+
+func sound_is_open() -> bool:
+	return is_instance_valid(sound_panel) and sound_panel.visible
+
+func toggle_sound_panel() -> void:
+	if sound_is_open():
+		close_sound_panel()
+		return
+	for channel in sound_sliders:
+		sound_sliders[channel].set_value_no_signal(audio.settings[channel])
+	sound_mute.set_pressed_no_signal(audio.settings["muted"])
+	sound_shade.show()
+	sound_panel.show()
+	audio.update_footsteps(0.0, false)
+	hovered = ""
+	queue_redraw()
+
+func close_sound_panel() -> void:
+	sound_panel.hide()
+	sound_shade.hide()
+	queue_redraw()
+
+func _input(event: InputEvent) -> void:
+	if sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ESCAPE, KEY_M]:
+		close_sound_panel()
+		get_viewport().set_input_as_handled()
 
 func new_game(show_intro: bool = true) -> void:
+	close_sound_panel()
 	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
 	player = Vector2(173, 280)
 	destination = player
@@ -190,6 +279,7 @@ func new_game(show_intro: bool = true) -> void:
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	finale_panel.hide()
+	audio.set_room("diner", true)
 	say("A stolen relic. A suspicious clone. First: get out of the diner.")
 	if show_intro:
 		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."])
@@ -209,13 +299,21 @@ func award(key: String, points: int) -> void:
 	if not flag(key):
 		state["flags"][key] = true
 		state["score"] += points
+		if key in ["hatch_fixed", "floor_clean"]:
+			audio.play_sfx("success")
+		elif key in ["museum_access", "coordinates_set", "cleaning_mode"]:
+			audio.play_sfx("terminal")
+		elif key == "complete":
+			audio.play_sfx("complete")
 
 func has_item(item: String) -> bool:
 	return state.get("inventory", []).has(item)
 
-func add_item(item: String) -> void:
+func add_item(item: String, play_pickup: bool = true) -> void:
 	if not has_item(item):
 		state["inventory"].append(item)
+		if play_pickup:
+			audio.play_sfx("pickup")
 
 func remove_item(item: String) -> void:
 	state["inventory"].erase(item)
@@ -223,7 +321,7 @@ func remove_item(item: String) -> void:
 		selected = ""
 
 func set_verb(action: String) -> void:
-	if dialogue_panel.visible:
+	if dialogue_panel.visible or sound_is_open():
 		return
 	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
@@ -248,6 +346,7 @@ func _advance_dialog() -> void:
 		dialogue_panel.hide()
 		return
 	var line: String = dialogue_lines.pop_front()
+	audio.play_sfx("dialogue")
 	dialogue_text.text = line
 	speaker_label.text = {"roger": "ROGER — SANITATION / RELUCTANT HERO", "cook": "BEX — HEAD COOK / OIL BARON", "guard": "VOSS — DOCK INSPECTOR", "guardian": "ARCHIVE GUARDIAN / MAINTENANCE AI", "clone": "R0-GER — RECORDED MESSAGE"}.get(dialogue_speaker, "TRANSMISSION")
 	portrait.texture = textures.get("portrait_" + ("guard" if dialogue_speaker == "guardian" else dialogue_speaker), null)
@@ -290,7 +389,7 @@ func update_hud() -> void:
 	queue_redraw()
 
 func select_item(item: String) -> void:
-	if dialogue_panel.visible or not has_item(item):
+	if dialogue_panel.visible or sound_is_open() or not has_item(item):
 		return
 	if selected != "" and selected != item:
 		if combine_items(selected, item):
@@ -303,35 +402,45 @@ func select_item(item: String) -> void:
 
 func combine_items(first: String, second: String) -> bool:
 	if not has_item(first) or not has_item(second):
+		audio.play_sfx("blocked")
 		return false
 	if (first == "cleaner" and second == "mop") or (first == "mop" and second == "cleaner"):
 		remove_item("cleaner")
 		remove_item("mop")
-		add_item("charged mop")
+		add_item("charged mop", false)
 		selected = "charged mop"
 		award("mop_charged", 5)
+		audio.play_sfx("combine")
 		show_dialog("roger", ["One freshly charged ion mop. Finally, a weapon covered by my professional qualifications."])
 		update_hud()
 		return true
 	say("Those items don't fit together. Roger's pockets appreciate your restraint.")
+	audio.play_sfx("blocked")
 	return false
 
 func _process(delta: float) -> void:
 	elapsed += delta
 	var moving := player.distance_to(destination) > 1.0
-	if moving and not dialogue_panel.visible and not flag("complete"):
+	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not flag("complete")
+	if walking:
+		var old_position := player
 		facing_right = destination.x >= player.x
 		player = player.move_toward(destination, delta * 132.0)
+		audio.update_footsteps(old_position.distance_to(player) / 132.0, true)
 		if player.distance_to(destination) < 1.0 and not pending_interaction.is_empty():
 			var queued: Dictionary = pending_interaction.duplicate()
 			pending_interaction.clear()
 			perform_action(queued["id"], queued["verb"], queued["item"])
+	else:
+		audio.update_footsteps(0.0, false)
 	var mouse := get_global_mouse_position()
-	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible else ""
+	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() else ""
 	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if sound_is_open():
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_SPACE or event.keycode == KEY_ENTER:
 			if dialogue_panel.visible:
@@ -348,6 +457,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			give_hint()
 		elif event.keycode == KEY_I:
 			say("Your pockets are at bottom right. Click an item, then a room object; click two items to combine them.")
+		elif event.keycode == KEY_M:
+			audio.play_sfx("ui_click")
+			toggle_sound_panel()
 		elif event.keycode == KEY_N and dialogue_panel.visible and dialogue_text.text.begins_with("Starting again"):
 			new_game()
 		elif event.keycode == KEY_ESCAPE:
@@ -373,6 +485,8 @@ func hotspot_at(point: Vector2) -> String:
 	return ""
 
 func route_click(point: Vector2) -> void:
+	if sound_is_open():
+		return
 	if dialogue_panel.visible:
 		_advance_dialog()
 		return
@@ -387,6 +501,8 @@ func route_click(point: Vector2) -> void:
 	queue_world_action(id, action, selected)
 
 func route_right_click(point: Vector2) -> void:
+	if sound_is_open():
+		return
 	if dialogue_panel.visible:
 		_advance_dialog()
 		return
@@ -442,7 +558,7 @@ func interact(id: String) -> void:
 	perform_action(id, "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
-	if state.is_empty() or flag("complete"):
+	if state.is_empty() or flag("complete") or sound_is_open():
 		return
 	if item == "" and action in ["Use", "Interact"]:
 		item = selected
@@ -451,6 +567,7 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 	var room: String = state["room"]
 	if not HOTSPOTS[room].has(id):
 		say("That object isn't in this room.")
+		audio.play_sfx("blocked")
 		return
 	if action == "Look":
 		inspect_object(id)
@@ -498,6 +615,7 @@ func use_object(id: String, item: String) -> void:
 			match id:
 				"grease":
 					if not flag("cook_help"):
+						audio.play_sfx("blocked")
 						show_dialog("cook", ["Ask before pocketing my gourmet industrial waste, spaceman."])
 					elif has_item("grease") or flag("hatch_fixed"):
 						say("You've already put the grease to good use.")
@@ -513,11 +631,13 @@ func use_object(id: String, item: String) -> void:
 						award("hatch_fixed", 10)
 						show_dialog("roger", ["A dab of grease, a satisfying clunk, and the hatch opens. The first useful thing this diner has produced all week."])
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["Dry, seized gears. They need lubricant. Bex's fryer might be useful for something after all."])
 				"exit":
 					if flag("hatch_fixed"):
 						enter_room("dock", Vector2(61, 279))
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["The hatch won't move. Inspect the gear panel beside it."])
 				"cook", "counter":
 					talk_to("cook")
@@ -531,24 +651,28 @@ func use_object(id: String, item: String) -> void:
 					if item == "service chit" and has_item(item):
 						remove_item(item)
 						add_item("keycard")
-						add_item("maintenance pass")
+						add_item("maintenance pass", false)
 						award("guard_help", 10)
 						show_dialog("guard", ["One service chit. Signed, stamped, suspiciously greasy. Here's your locker keycard and a museum maintenance pass.", "Open the locker, then use the keycard at the dock terminal to activate the museum lift. If you find the clone's star map, load it here before boarding the shuttle."])
 					else:
+						audio.play_sfx("blocked")
 						talk_to("guard")
 				"locker":
 					if flag("locker_open"):
 						say("The locker is open. " + ("You collected the ion cleaner and mop." if flag("mop_taken") else "The mop beside it is released; click it to pick it up."))
 					elif item == "keycard" and has_item(item):
+						audio.play_sfx("door")
 						add_item("cleaner")
 						award("locker_open", 10)
 						show_dialog("roger", ["The locker opens: one bottle of ion cleaner. It also releases the magnetic clamp on the mop leaning beside it. Click the mop to pick it up.", "You can combine items in your pockets: click one, then the other. The ion cleaner belongs on the mop, not in the coffee."])
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["Locked. Inspector Voss issues keycards to janitors with valid service paperwork."])
 				"mop":
 					if flag("mop_taken"):
 						say("You already collected the service mop.")
 					elif not flag("locker_open"):
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["A magnetic clamp holds the mop. Open the maintenance locker with your dock keycard to release it."])
 					else:
 						add_item("mop")
@@ -564,11 +688,13 @@ func use_object(id: String, item: String) -> void:
 							award("museum_access", 5)
 						show_dialog("guard", ["Museum lift authorized. The doorway on the right leads up to the archive. Keep the maintenance pass ready for its guardian."])
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["Two slots: dock keycard for the museum lift, navigation archive for the courier's route. Very considerate labelling by galactic standards."])
 				"museum":
 					if flag("museum_access"):
 						enter_room("museum", Vector2(548, 282))
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("guard", ["Authorize the lift at the dock terminal. It needs your keycard."])
 				"shuttle":
 					if flag("coordinates_set"):
@@ -578,6 +704,7 @@ func use_object(id: String, item: String) -> void:
 						finale_panel.show()
 						say("Course set for Labion. Chapter complete — 100/100.")
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["The shuttle needs a destination. Retrieve the museum's navigation archive and use it on the dock terminal first."])
 		"museum":
 			match id:
@@ -590,19 +717,23 @@ func use_object(id: String, item: String) -> void:
 						award("cleaning_mode", 10)
 						show_dialog("guardian", ["PASS ACCEPTED. Maintenance mode enabled. Remove coolant from the floor using a charged mop; the archive seal will release automatically."])
 					else:
+						audio.play_sfx("blocked")
 						talk_to("guardian")
 				"spill":
 					if flag("floor_clean"):
 						say("The floor gleams. Somewhere, a janitorial supervisor sheds a tear.")
 					elif not flag("cleaning_mode"):
+						audio.play_sfx("blocked")
 						show_dialog("guardian", ["MAINTENANCE NOT AUTHORIZED. Present a valid maintenance pass before touching the coolant."])
 					elif item == "charged mop" and has_item(item):
 						remove_item(item)
 						award("floor_clean", 10)
 						show_dialog("guardian", ["CONTAMINANT NEUTRALIZED. Floor sheen: exemplary. Archive seal released. Your annual performance review will include one complimentary adjective."])
 					elif item == "mop":
+						audio.play_sfx("blocked")
 						show_dialog("roger", ["A dry mop just spreads the ion coolant. Combine the cleaner and mop in your pockets first."])
 					else:
+						audio.play_sfx("blocked")
 						inspect_object("spill")
 				"plinth":
 					if flag("archive_taken"):
@@ -612,10 +743,16 @@ func use_object(id: String, item: String) -> void:
 						award("archive_taken", 10)
 						show_dialog("clone", ["RECORDED MESSAGE: Thanks for taking the blame, original me. I'll be on Labion, acquiring a galaxy. Do enjoy your next shift.", "The stolen archive is now in your pockets. Return to the dock, use MAP on the terminal, then board the courier to follow the impostor."])
 					else:
+						audio.play_sfx("blocked")
 						show_dialog("guardian", ["ARCHIVE SEALED. Present maintenance credentials, then neutralize the coolant spill. This is a museum, not a slip-and-fall attraction."])
 
 func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> void:
+	if not ROOM_NAMES.has(room):
+		return
+	if state.get("room", "") != room:
+		audio.play_sfx("door")
 	state["room"] = room
+	audio.set_room(room)
 	player = position_value
 	destination = player
 	pending_interaction.clear()
@@ -627,6 +764,8 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	update_hud()
 
 func give_hint() -> void:
+	if sound_is_open():
+		return
 	var hint := "The courier is ready. Click the shuttle in the dock to board."
 	if not flag("cook_help"):
 		hint = "Click Bex, the cook, to talk. You need permission and your service paperwork."
@@ -658,28 +797,40 @@ func save_game() -> bool:
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file == null:
 		say("Couldn't write the save file: " + error_string(FileAccess.get_open_error()))
+		audio.play_sfx("blocked")
 		return false
 	var snapshot := state.duplicate(true)
 	snapshot["player"] = [player.x, player.y]
 	file.store_string(JSON.stringify(snapshot, "\t"))
+	var write_error := file.get_error()
+	file.close()
+	if write_error != OK:
+		say("Couldn't finish writing the save file: " + error_string(write_error))
+		audio.play_sfx("blocked")
+		return false
 	say("Game saved. F9 or Load restores this checkpoint.")
+	audio.play_sfx("save")
 	return true
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(SAVE_PATH):
 		say("No saved game yet. Click Save or press F5 to create one.")
+		audio.play_sfx("blocked")
 		return false
 	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if file == null:
 		say("Couldn't open the saved game.")
+		audio.play_sfx("blocked")
 		return false
 	var snapshot = JSON.parse_string(file.get_as_text())
 	if not snapshot is Dictionary or not ROOM_NAMES.has(snapshot.get("room", "")) or not snapshot.get("inventory", null) is Array or not snapshot.get("flags", null) is Dictionary:
 		say("The save file isn't a valid chapter checkpoint.")
+		audio.play_sfx("blocked")
 		return false
 	var position_value = snapshot.get("player", [170.0, 280.0])
 	if not position_value is Array or position_value.size() != 2 or not (position_value[0] is float or position_value[0] is int) or not (position_value[1] is float or position_value[1] is int):
 		say("The checkpoint contains an invalid player position.")
+		audio.play_sfx("blocked")
 		return false
 	state = snapshot
 	state.erase("player")
@@ -696,7 +847,10 @@ func load_game() -> bool:
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	finale_panel.visible = flag("complete")
+	audio.set_room(state["room"])
+	audio.update_footsteps(0.0, false)
 	say("Checkpoint restored. " + ROOM_INTROS[state["room"]])
+	audio.play_sfx("load")
 	update_hud()
 	return true
 
@@ -787,7 +941,7 @@ func draw_ellipse(rect: Rect2, color: Color) -> void:
 	draw_colored_polygon(points, color)
 
 func _draw_player() -> void:
-	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible
+	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not flag("complete")
 	var bob := sin(elapsed * 11) * 1.2 if moving else sin(elapsed * 1.7) * 0.3
 	var perspective_height := lerpf(105.0, 140.0, clampf((player.y - 257.0) / 49.0, 0.0, 1.0))
 	draw_ellipse(Rect2(player.x - 22, player.y - 4, 45, 10), Color(0.01, 0.015, 0.025, 0.45))

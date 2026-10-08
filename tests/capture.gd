@@ -42,4 +42,8 @@ func capture() -> void:
 		quit(1)
 		return
 	print("Screenshot: " + ProjectSettings.globalize_path(output))
+	game.queue_free()
+	await process_frame
+	await process_frame
+	await create_timer(0.25).timeout
 	quit()

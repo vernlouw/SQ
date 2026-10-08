@@ -251,4 +251,7 @@ func check() -> void:
 		print("PASS: %d checks — three rooms, blocked progression, mouse routing, inventory puzzles, save/load/reset, chapter ending" % checks)
 	else:
 		push_error("%d of %d smoke checks failed" % [failures, checks])
+	game.queue_free()
+	# Let the audio mixer release the scene's active WAV playback before exit.
+	await create_timer(0.15).timeout
 	quit(0 if failures == 0 else 1)
