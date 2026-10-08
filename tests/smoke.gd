@@ -24,10 +24,21 @@ func act(target: String, action := "Use", item := "") -> void:
 	game.perform_action(target, action, item)
 	game.close_dialogue()
 
-func click(point: Vector2) -> void:
+func write_legacy_checkpoint() -> void:
+	# Earlier chapter builds put the mop straight into inventory at the locker.
+	var snapshot: Dictionary = game.state.duplicate(true)
+	snapshot["flags"].erase("mop_taken")
+	snapshot["player"] = [game.player.x, game.player.y]
+	var file := FileAccess.open(game.SAVE_PATH, FileAccess.WRITE)
+	expect(file != null, "Legacy checkpoint fixture can be written to the isolated test save slot")
+	if file != null:
+		file.store_string(JSON.stringify(snapshot))
+		file.close()
+
+func click(point: Vector2, mouse_button := MOUSE_BUTTON_LEFT) -> void:
 	for pressed in [true, false]:
 		var event := InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
+		event.button_index = mouse_button
 		event.pressed = pressed
 		event.position = point
 		event.global_position = point
@@ -39,14 +50,26 @@ func click_button(button: Button) -> void:
 	# Canvas stretching scales Control coordinates before viewport input routing.
 	await click(button.get_global_transform_with_canvas() * (button.size / 2.0))
 
-func finish_walk() -> void:
+func click_hotspot(id: String, mouse_button := MOUSE_BUTTON_LEFT) -> void:
+	await click(game.get_global_transform_with_canvas() * game.hotspots[id].get_center(), mouse_button)
+
+func press_key(keycode: int) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = keycode
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+func finish_walk(dismiss_dialogue := true) -> void:
 	# Drive normal movement/arrival code with a deterministic simulation interval.
 	for frame in range(900):
 		game._process(1.0 / 60.0)
-		if game.pending_interaction.is_empty():
+		if game.pending_interaction.is_empty() and game.player.distance_to(game.destination) <= 1.0:
 			break
-	game.close_dialogue()
-	expect(game.pending_interaction.is_empty(), "Hotspot interaction must complete after walking into position")
+	if dismiss_dialogue:
+		game.close_dialogue()
+	expect(game.pending_interaction.is_empty() and game.player.distance_to(game.destination) <= 1.0, "Click movement reaches its destination and completes the queued action")
 
 func check() -> void:
 	# If a parse/runtime failure interrupts this routine, fail instead of hanging.
@@ -59,29 +82,57 @@ func check() -> void:
 	game.new_game(false)
 	expect(game.state["room"] == "diner", "New game starts in the diner")
 	expect(game.state["inventory"].is_empty(), "New game starts without puzzle items")
-	act("exit", "Walk")
+	expect(game.verb == "Interact", "New game starts with automatic object interactions")
+	var walk_button_exists := false
+	for button in game.verb_buttons:
+		walk_button_exists = walk_button_exists or button.text == "Walk"
+	expect(not walk_button_exists and game.verb_buttons.size() == 3, "Interface offers optional Look, Use, Talk without a Walk button")
+	await click_hotspot("exit")
+	finish_walk()
 	expect(game.state["room"] == "diner", "Broken hatch blocks leaving the diner")
-	act("grease")
+	await click_hotspot("grease")
+	finish_walk()
 	expect(not has_item("grease"), "Taking grease requires the cook's permission")
 	act("panel", "Use", "grease")
 	expect(not flag("hatch_fixed"), "An unowned inventory item cannot solve the hatch")
 
-	# Use actual mouse events for verb buttons and the world hotspot path.
-	await click_button(game.verb_buttons[1])
-	await click(game.get_global_transform_with_canvas() * game.hotspots["news"].get_center())
-	expect(game.verb == "Look" and game.dialogue_panel.visible, "Look button and news hotspot open readable story dialogue")
+	# Floor clicks always move, without requiring any movement verb.
+	await click(Vector2(125, 302))
+	expect(game.player.distance_to(game.destination) > 1.0 and game.pending_interaction.is_empty(), "Default floor click starts walking instead of an object interaction")
+	finish_walk()
+	expect(game.player.distance_to(Vector2(125, 302)) <= 1.0, "Automatic walking reaches the clicked floor location")
+	await click_button(game.verb_buttons[0])
+	expect(game.verb == "Look", "Optional Look button selects inspection mode")
+	await click(Vector2(185, 302))
+	expect(game.player.distance_to(game.destination) > 1.0 and game.verb == "Look", "Floor click still walks while Look is selected")
+	finish_walk()
+	expect(game.player.distance_to(Vector2(185, 302)) <= 1.0, "Walking in Look mode reaches the clicked floor location")
+	await click_button(game.verb_buttons[0])
+	expect(game.verb == "Interact", "Clicking an active override returns to automatic interactions")
+	await click_hotspot("news")
+	finish_walk(false)
+	expect(game.dialogue_panel.visible and game.verb == "Interact", "Primary news-terminal click automatically opens story inspection dialogue")
 	game.close_dialogue()
-	await click_button(game.verb_buttons[3])
-	expect(game.verb == "Talk", "Mouse clicks on the Talk button select Talk")
-	await click(game.get_global_transform_with_canvas() * game.hotspots["cook"].get_center())
+	await click_hotspot("cook", MOUSE_BUTTON_RIGHT)
+	finish_walk(false)
+	expect(game.dialogue_panel.visible and not flag("cook_help"), "Right-clicking a person inspects them without triggering their conversation puzzle")
+	game.close_dialogue()
+	await click_button(game.verb_buttons[2])
+	await click(Vector2(185, 302), MOUSE_BUTTON_RIGHT)
+	expect(game.verb == "Interact" and game.selected.is_empty(), "Right-clicking empty floor cancels the optional verb")
+	await click(Vector2(125, 302))
+	finish_walk()
+	await click_hotspot("cook")
 	expect(not game.pending_interaction.is_empty(), "Clicking the cook queues an interaction")
 	finish_walk()
-	expect(flag("cook_help") and has_item("service chit"), "Walking to the cook executes the requested conversation")
+	expect(flag("cook_help") and has_item("service chit") and game.verb == "Interact", "Primary cook click approaches and automatically talks, without choosing Talk")
 	var score_after_cook: int = game.state["score"]
 	act("cook", "Talk")
 	expect(game.state["inventory"].count("service chit") == 1, "Repeated dialogue cannot duplicate the service chit")
 	expect(game.state["score"] == score_after_cook, "Repeated puzzle dialogue cannot duplicate score")
-	act("grease")
+	await click_hotspot("grease")
+	finish_walk()
+	expect(has_item("grease"), "Primary grease click automatically picks it up after permission")
 	act("grease")
 	expect(game.state["inventory"].count("grease") == 1, "Grease can be collected only once")
 	act("panel")
@@ -90,13 +141,26 @@ func check() -> void:
 	expect(not flag("hatch_fixed") and has_item("service chit"), "Wrong-item use leaves puzzle state and inventory intact")
 	await process_frame
 	await click_button(game.inventory_buttons["grease"])
-	expect(game.selected == "grease" and game.verb == "Use", "Inventory mouse selection sets the item and Use verb")
-	await click(game.get_global_transform_with_canvas() * game.hotspots["panel"].get_center())
+	expect(game.selected == "grease", "Inventory mouse click selects the item for the next object interaction")
+	await click(Vector2(185, 302), MOUSE_BUTTON_RIGHT)
+	expect(game.selected.is_empty() and game.verb == "Interact", "Right-clicking empty floor cancels the selected inventory item")
+	await click_button(game.inventory_buttons["grease"])
+	await press_key(KEY_ESCAPE)
+	expect(game.selected.is_empty() and game.verb == "Interact", "Escape cancels the selected item and returns to automatic interactions")
+	await click_button(game.inventory_buttons["grease"])
+	await click(Vector2(185, 302))
+	expect(game.player.distance_to(game.destination) > 1.0 and game.selected == "grease", "Floor click walks while preserving the selected inventory item")
+	finish_walk()
+	expect(game.player.distance_to(Vector2(185, 302)) <= 1.0 and game.selected == "grease", "Walking with a selected item reaches the clicked floor and keeps the item selected")
+	await click_hotspot("panel")
 	finish_walk()
 	expect(flag("hatch_fixed") and not has_item("grease"), "Using grease at the panel repairs the hatch and consumes it")
-	act("exit", "Walk")
+	# Cancel a remaining override, then use the door directly.
+	await click(Vector2(185, 302), MOUSE_BUTTON_RIGHT)
+	await click_hotspot("exit")
+	finish_walk()
 	expect(game.state["room"] == "dock", "Repaired hatch leads to the dock")
-	act("museum", "Walk")
+	act("museum")
 	expect(game.state["room"] == "dock", "Museum entry requires authorization")
 	act("shuttle")
 	expect(not flag("complete"), "Shuttle cannot depart without destination coordinates")
@@ -108,8 +172,14 @@ func check() -> void:
 	expect(has_item("keycard") and has_item("maintenance pass") and not has_item("service chit"), "Guard trades the service chit for access items")
 	act("guard", "Use", "service chit")
 	expect(game.state["inventory"].count("keycard") == 1, "Repeated guard interaction cannot duplicate access items")
+	await click_hotspot("mop")
+	finish_walk()
+	expect(not has_item("mop"), "Dock mop cannot be picked up before its magnetic lock is released")
 	act("locker", "Use", "keycard")
-	expect(flag("locker_open") and has_item("mop") and has_item("cleaner"), "Keycard opens locker and supplies tools")
+	expect(flag("locker_open") and has_item("cleaner") and not has_item("mop"), "Keycard opens locker, supplies cleaner, and releases the world mop")
+	await click_hotspot("mop")
+	finish_walk()
+	expect(has_item("mop") and flag("mop_taken"), "Primary world mop click automatically picks it up after unlocking")
 	act("locker", "Use", "keycard")
 	expect(game.state["inventory"].count("mop") == 1 and game.state["inventory"].count("cleaner") == 1, "Locker cannot duplicate tools")
 	act("terminal", "Use", "keycard")
@@ -125,8 +195,12 @@ func check() -> void:
 	game.close_dialogue()
 	expect(game.state == saved_state, "Load restores room, inventory, flags, and score")
 	expect(game.player == saved_player and game.destination == saved_player, "Load restores the character position without resuming stale movement")
+	write_legacy_checkpoint()
+	game.new_game(false)
+	expect(game.load_game() and flag("mop_taken") and has_item("mop"), "Legacy save with a mop in inventory marks the world pickup as already taken")
+	expect(game.state == saved_state, "Legacy mop checkpoint normalizes to the current puzzle state")
 
-	act("museum", "Walk")
+	act("museum")
 	expect(game.state["room"] == "museum", "Authorized museum entrance reaches the third room")
 	act("plinth")
 	expect(not has_item("star map"), "Unsafe museum floor blocks the star map")
@@ -149,7 +223,7 @@ func check() -> void:
 	act("plinth")
 	act("plinth")
 	expect(game.state["inventory"].count("star map") == 1, "Cleaning unlocks the map, which can only be collected once")
-	act("exit", "Walk")
+	act("exit")
 	expect(game.state["room"] == "dock", "Museum exit returns to dock")
 	act("shuttle")
 	expect(not flag("complete"), "Possessing the map alone does not program the shuttle")
@@ -162,9 +236,12 @@ func check() -> void:
 	expect(not flag("complete"), "New game resets the ending")
 	expect(game.load_game() and flag("complete"), "Loading completed progress restores the ending")
 	expect(game.finale_panel.visible, "Loading completed progress displays the chapter ending")
+	write_legacy_checkpoint()
+	game.new_game(false)
+	expect(game.load_game() and flag("complete") and flag("mop_taken"), "Legacy completed save marks the consumed mop as taken and restores the ending")
 	game.close_dialogue()
 	game.new_game(false)
-	expect(game.selected.is_empty() and game.pending_interaction.is_empty(), "New game clears selected inventory and pending movement")
+	expect(game.selected.is_empty() and game.pending_interaction.is_empty() and game.verb == "Interact", "New game clears selected inventory and pending movement and restores automatic interactions")
 	if failures == 0:
 		print("PASS: %d checks — three rooms, blocked progression, mouse routing, inventory puzzles, save/load/reset, chapter ending" % checks)
 	else:

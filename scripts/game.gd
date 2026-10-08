@@ -3,7 +3,8 @@ extends Node2D
 ## exposed through perform_action so the walkthrough can run without rendering.
 
 const SAVE_PATH := "user://the_mop_job_save.json"
-const VERBS := ["Walk", "Look", "Use", "Talk"]
+const VERBS := ["Look", "Use", "Talk"]
+const KEY_ACTIONS := ["Interact", "Look", "Use", "Talk"]
 const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM"}
 const ROOM_INTROS := {
 	"diner": "Your shift ended three hours ago. Naturally, the universe waited until now to need a janitor.",
@@ -23,6 +24,7 @@ const HOTSPOTS := {
 	},
 	"dock": {
 		"exit": {"rect": Rect2(6, 83, 45, 185), "at": Vector2(53, 274), "name": "Back to diner"},
+		"mop": {"rect": Rect2(150, 150, 28, 79), "at": Vector2(174, 277), "name": "Service mop"},
 		"locker": {"rect": Rect2(110, 93, 75, 140), "at": Vector2(136, 277), "name": "Maintenance locker"},
 		"guard": {"rect": Rect2(290, 119, 110, 120), "at": Vector2(286, 276), "name": "Inspector Voss"},
 		"terminal": {"rect": Rect2(488, 121, 50, 76), "at": Vector2(493, 281), "name": "Dock control terminal"},
@@ -39,7 +41,7 @@ const HOTSPOTS := {
 }
 
 var state: Dictionary = {}
-var verb := "Walk"
+var verb := "Interact"
 var selected := ""
 var player := Vector2(170, 279)
 var destination := player
@@ -135,12 +137,12 @@ func _build_ui() -> void:
 	status_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	status_label.clip_text = true
 	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	for index in range(4):
+	for index in range(VERBS.size()):
 		var action: String = VERBS[index]
-		var button := _button(action, Vector2(12 + index * 61, 348), Vector2(57, 34), func(): set_verb(action))
-		button.tooltip_text = str(index + 1) + " — " + action
+		var button := _button(action, Vector2(12 + index * 80, 348), Vector2(76, 34), func(): set_verb(action))
+		button.tooltip_text = str(index + 2) + " — " + action + "; click again for automatic interaction."
 		verb_buttons.append(button)
-	_label("1–4 verbs   •   Click to walk   •   Tab hotspots", Vector2(12, 383), Vector2(310, 15), 9)
+	_label("Click to move / interact • Right-click inspect", Vector2(12, 383), Vector2(251, 15), 9)
 	_label("POCKETS", Vector2(264, 343), Vector2(340, 17), 9)
 	inventory_container = HBoxContainer.new()
 	inventory_container.position = Vector2(264, 361)
@@ -183,14 +185,14 @@ func new_game(show_intro: bool = true) -> void:
 	player = Vector2(173, 280)
 	destination = player
 	pending_interaction.clear()
-	verb = "Walk"
+	verb = "Interact"
 	selected = ""
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	finale_panel.hide()
 	say("A stolen relic. A suspicious clone. First: get out of the diner.")
 	if show_intro:
-		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Find the stolen navigation archive, get the courier flying, and follow the impostor. Click a verb, then an object. Your pockets are at the bottom right."])
+		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."])
 	update_hud()
 	queue_redraw()
 
@@ -223,9 +225,10 @@ func remove_item(item: String) -> void:
 func set_verb(action: String) -> void:
 	if dialogue_panel.visible:
 		return
-	verb = action
+	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
-	say(action + ": click something in the room.")
+	pending_interaction.clear()
+	say("Click objects to interact; click the floor to move." if verb == "Interact" else verb + ": click an object. Click the active button again to return to automatic interaction.")
 	update_hud()
 
 func say(line: String) -> void:
@@ -294,7 +297,7 @@ func select_item(item: String) -> void:
 			update_hud()
 			return
 	selected = item
-	verb = "Use"
+	verb = "Interact"
 	say("Using " + str(INVENTORY_NAMES.get(item, item)) + ". Click a room object or another pocket item.")
 	update_hud()
 
@@ -325,6 +328,7 @@ func _process(delta: float) -> void:
 			perform_action(queued["id"], queued["verb"], queued["item"])
 	var mouse := get_global_mouse_position()
 	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible else ""
+	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -333,7 +337,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if dialogue_panel.visible:
 				_advance_dialog()
 		elif event.keycode >= KEY_1 and event.keycode <= KEY_4:
-			set_verb(VERBS[event.keycode - KEY_1])
+			set_verb(KEY_ACTIONS[event.keycode - KEY_1])
 		elif event.keycode == KEY_TAB:
 			show_hotspots = not show_hotspots
 		elif event.keycode == KEY_F5:
@@ -347,16 +351,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_N and dialogue_panel.visible and dialogue_text.text.begins_with("Starting again"):
 			new_game()
 		elif event.keycode == KEY_ESCAPE:
-			dialogue_lines.clear()
-			dialogue_panel.hide()
-			selected = ""
-			update_hud()
+			close_dialogue()
+			reset_interaction()
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			route_click(event.position)
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			var index := (VERBS.find(verb) + 1) % VERBS.size()
-			set_verb(VERBS[index])
+			route_right_click(event.position)
 
 func hotspot_at(point: Vector2) -> String:
 	var room: String = state.get("room", "diner")
@@ -364,6 +365,8 @@ func hotspot_at(point: Vector2) -> String:
 		return ""
 	for id in HOTSPOTS[room]:
 		if id == "grease" and (has_item("grease") or flag("hatch_fixed")):
+			continue
+		if id == "mop" and flag("mop_taken"):
 			continue
 		if HOTSPOTS[room][id]["rect"].has_point(point):
 			return str(id)
@@ -378,31 +381,73 @@ func route_click(point: Vector2) -> void:
 	var id := hotspot_at(point)
 	if id == "":
 		pending_interaction.clear()
-		if verb == "Walk":
-			destination = Vector2(clampf(point.x, 25, 615), clampf(point.y, 257, 306))
-		elif verb == "Look":
-			show_dialog("roger", [ROOM_INTROS[state["room"]]])
-		else:
-			say("Try an object or a person. Hover to see what you're pointing at.")
+		destination = Vector2(clampf(point.x, 25, 615), clampf(point.y, 257, 306))
 		return
-	if verb == "Look":
-		perform_action(id, verb, selected)
+	var action := "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb)
+	queue_world_action(id, action, selected)
+
+func route_right_click(point: Vector2) -> void:
+	if dialogue_panel.visible:
+		_advance_dialog()
+		return
+	if point.y < 26 or point.y >= 318 or flag("complete"):
+		return
+	var id := hotspot_at(point)
+	if id == "":
+		reset_interaction()
+	else:
+		queue_world_action(id, "Look", "")
+
+func reset_interaction() -> void:
+	selected = ""
+	verb = "Interact"
+	pending_interaction.clear()
+	say("Click objects to interact; click the floor to move.")
+	update_hud()
+
+func default_action(id: String) -> String:
+	if id in ["news", "kiosk"]:
+		return "Look"
+	if id in ["cook", "counter", "guard", "guardian"]:
+		return "Talk"
+	return "Use"
+
+func contextual_action_label(id: String) -> String:
+	if selected != "":
+		return "Use " + str(INVENTORY_NAMES.get(selected, selected)) + " on"
+	var action := default_action(id) if verb == "Interact" else verb
+	if action == "Look":
+		return "Inspect"
+	if action == "Talk":
+		return "Talk to"
+	if id in ["grease", "mop"] or (id == "plinth" and not flag("archive_taken")):
+		return "Pick up"
+	if id in ["exit", "museum"]:
+		return "Enter"
+	if id == "shuttle":
+		return "Board"
+	return "Use"
+
+func queue_world_action(id: String, action: String, item: String = "") -> void:
+	if not HOTSPOTS[state["room"]].has(id):
 		return
 	var data: Dictionary = HOTSPOTS[state["room"]][id]
 	destination = data["at"]
-	pending_interaction = {"id": id, "verb": verb, "item": selected}
+	pending_interaction = {"id": id, "verb": action, "item": item}
 	if player.distance_to(destination) < 1:
 		pending_interaction.clear()
-		perform_action(id, verb, selected)
+		perform_action(id, action, item)
 
 func interact(id: String) -> void:
-	perform_action(id, verb, selected)
+	perform_action(id, "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
 	if state.is_empty() or flag("complete"):
 		return
-	if item == "" and action == "Use":
+	if item == "" and action in ["Use", "Interact"]:
 		item = selected
+	if action == "Interact":
+		action = "Use" if item != "" else default_action(id)
 	var room: String = state["room"]
 	if not HOTSPOTS[room].has(id):
 		say("That object isn't in this room.")
@@ -423,7 +468,7 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 func inspect_object(id: String) -> void:
 	var descriptions := {
 		"diner": {"news": "SECURITY BULLETIN: a counterfeit janitor stole the Mop of Destiny. The museum's navigation archive recorded his escape. That face looks horribly familiar.", "cook": "Bex has fed six civilizations and poisoned only the ones that complained.", "grease": "Industrial fryer grease. According to the label: condiment, lubricant, and emergency rocket fuel.", "counter": "The sanitation service desk is cunningly disguised as a burger counter. Bex probably has your paperwork.", "panel": "The hatch's exposed gears have seized. A little lubricant should free them.", "exit": "The service dock is through this hatch. The mechanism is " + ("running smoothly." if flag("hatch_fixed") else "jammed solid.")},
-		"dock": {"exit": "Back to the diner. The menu is less hazardous than most planets.", "locker": "A card-operated maintenance locker. Inside: standard-issue cleaning gear.", "guard": "Inspector Voss. Protector of the dock, sworn enemy of unsigned forms.", "terminal": "The dock console manages museum access and shuttle navigation. Card reader on the left, archive socket on the right.", "museum": "A lift to the Arcada Memorial Museum. The control terminal authorizes entry.", "shuttle": "A courier shuttle with a perfectly good engine and absolutely no destination. The museum's stolen archive should tell you where the clone went."},
+		"dock": {"exit": "Back to the diner. The menu is less hazardous than most planets.", "locker": "A card-operated maintenance locker. It contains ion cleaner and controls the magnetic clamp on the nearby mop.", "mop": "A service mop leans beside the locker. Its magnetic security clamp releases when the locker is opened with a dock keycard.", "guard": "Inspector Voss. Protector of the dock, sworn enemy of unsigned forms.", "terminal": "The dock console manages museum access and shuttle navigation. Card reader on the left, archive socket on the right.", "museum": "A lift to the Arcada Memorial Museum. The control terminal authorizes entry.", "shuttle": "A courier shuttle with a perfectly good engine and absolutely no destination. The museum's stolen archive should tell you where the clone went."},
 		"museum": {"kiosk": "INCIDENT REPORT: clone R0-GER departed for Labion. Exact coordinates are stored in the navigation archive. Maintenance rules: present a pass; neutralize ion coolant with a charged mop.", "guardian": "A security automaton whose cleaning subroutine outranks its security subroutine. There is hope for us all.", "spill": "Ion coolant. A dry mop will only spread it. The maintenance locker has ion cleaner; combine it with a mop first.", "plinth": "The navigation archive floats behind a laser seal. Maintenance mode releases it only when the floor is clean.", "exit": "The service lift returns to your waiting courier."}
 	}
 	show_dialog("roger", [descriptions[state["room"]].get(id, "Worth another look.")])
@@ -462,7 +507,7 @@ func use_object(id: String, item: String) -> void:
 						show_dialog("roger", ["Fryer grease acquired. My uniform's resale value has acquired a minus sign."])
 				"panel":
 					if flag("hatch_fixed"):
-						say("The hatch is working. Walk through to the dock.")
+						say("The hatch is working. Click the doorway to enter the dock.")
 					elif item == "grease" and has_item(item):
 						remove_item(item)
 						award("hatch_fixed", 10)
@@ -493,14 +538,22 @@ func use_object(id: String, item: String) -> void:
 						talk_to("guard")
 				"locker":
 					if flag("locker_open"):
-						say("The locker is empty. You took the mop and ion cleaner.")
+						say("The locker is open. " + ("You collected the ion cleaner and mop." if flag("mop_taken") else "The mop beside it is released; click it to pick it up."))
 					elif item == "keycard" and has_item(item):
-						add_item("mop")
 						add_item("cleaner")
 						award("locker_open", 10)
-						show_dialog("roger", ["One service mop and a bottle of ion cleaner. When the galaxy sends its best, apparently it means the cleaning staff.", "You can combine items in your pockets: click one, then the other. The ion cleaner belongs on the mop, not in the coffee."])
+						show_dialog("roger", ["The locker opens: one bottle of ion cleaner. It also releases the magnetic clamp on the mop leaning beside it. Click the mop to pick it up.", "You can combine items in your pockets: click one, then the other. The ion cleaner belongs on the mop, not in the coffee."])
 					else:
 						show_dialog("roger", ["Locked. Inspector Voss issues keycards to janitors with valid service paperwork."])
+				"mop":
+					if flag("mop_taken"):
+						say("You already collected the service mop.")
+					elif not flag("locker_open"):
+						show_dialog("roger", ["A magnetic clamp holds the mop. Open the maintenance locker with your dock keycard to release it."])
+					else:
+						add_item("mop")
+						award("mop_taken", 0)
+						show_dialog("roger", ["Service mop acquired. Combine it with the ion cleaner in your pockets to make the charged mop the museum needs."])
 				"terminal":
 					if item == "star map" and has_item(item):
 						remove_item(item)
@@ -567,26 +620,28 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	destination = player
 	pending_interaction.clear()
 	selected = ""
-	verb = "Walk"
+	verb = "Interact"
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	say(ROOM_INTROS[room])
 	update_hud()
 
 func give_hint() -> void:
-	var hint := "The courier is ready. Walk to the shuttle in the dock."
+	var hint := "The courier is ready. Click the shuttle in the dock to board."
 	if not flag("cook_help"):
-		hint = "Talk to Bex, the cook. You need permission and your service paperwork."
+		hint = "Click Bex, the cook, to talk. You need permission and your service paperwork."
 	elif not flag("grease_taken"):
-		hint = "Use the small grease jar at the right end of the service counter."
+		hint = "Click the small grease jar at the right end of the counter to pick it up."
 	elif not flag("hatch_fixed"):
 		hint = "Select GREASE in your pockets, then click the gear panel beside the dock hatch."
 	elif not flag("guard_help"):
 		hint = "In the dock, select CHIT and use it on Inspector Voss."
 	elif not flag("locker_open"):
 		hint = "Use your CARD on the maintenance locker at the left side of the dock."
+	elif not flag("mop_taken"):
+		hint = "Click the mop leaning beside the open dock locker to pick it up."
 	elif not flag("museum_access"):
-		hint = "Use your CARD on the dock terminal, then walk to the museum lift at the far right."
+		hint = "Use your CARD on the dock terminal, then click the museum lift at the far right."
 	elif not flag("cleaning_mode"):
 		hint = "In the museum, use your PASS on the archive guardian."
 	elif not flag("mop_charged"):
@@ -629,11 +684,15 @@ func load_game() -> bool:
 	state = snapshot
 	state.erase("player")
 	state["score"] = int(state.get("score", 0))
+	# Earlier checkpoints granted the mop when the locker opened. Preserve that
+	# pickup when loading, including saves made after the mop was charged/used.
+	if has_item("mop") or has_item("charged mop") or flag("mop_charged") or flag("floor_clean"):
+		state["flags"]["mop_taken"] = true
 	player = Vector2(float(position_value[0]), float(position_value[1]))
 	destination = player
 	pending_interaction.clear()
 	selected = ""
-	verb = "Walk"
+	verb = "Interact"
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	finale_panel.visible = flag("complete")
@@ -658,6 +717,10 @@ func _draw() -> void:
 	draw_line(Vector2(0, 318), Vector2(640, 318), Color("7c6749"))
 	if show_hotspots:
 		for id in HOTSPOTS[room]:
+			if id == "grease" and (has_item("grease") or flag("hatch_fixed")):
+				continue
+			if id == "mop" and flag("mop_taken"):
+				continue
 			var rect: Rect2 = HOTSPOTS[room][id]["rect"]
 			draw_rect(rect, Color(0.94, 0.79, 0.48, 0.38), false, 1)
 			var label: String = HOTSPOTS[room][id]["name"]
@@ -665,7 +728,7 @@ func _draw() -> void:
 	if hovered != "" and not dialogue_panel.visible:
 		var data: Dictionary = HOTSPOTS[room][hovered]
 		var rect: Rect2 = data["rect"]
-		var label := (str(INVENTORY_NAMES.get(selected, selected)) + " → " if selected != "" else verb + "  ") + str(data["name"])
+		var label := contextual_action_label(hovered) + "  " + str(data["name"])
 		var label_width := ThemeDB.fallback_font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16
 		var label_position := Vector2(clampf(rect.get_center().x - label_width * 0.5, 6, 634 - label_width), clampf(rect.position.y - 22, 29, 293))
 		draw_style_box(_panel_style(Color(0.025, 0.075, 0.115, 0.94), Color("d6b778"), 3), Rect2(label_position, Vector2(label_width, 21)))
