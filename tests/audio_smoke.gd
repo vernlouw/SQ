@@ -69,7 +69,8 @@ func loop_channels_playing(room_id: String) -> void:
 	expect(loop_players == 2, room_id + " has exactly one music and one ambience player without overlapping old room loops")
 
 func check_assets() -> void:
-	expect(game.audio.streams.size() == 19, "All six room loops and thirteen original effects load")
+	var expected_assets := 20 if game.audio.streams.has("intro_theme") else 19
+	expect(game.audio.streams.size() == expected_assets, "All six room loops and thirteen original effects load, plus the optional intro when provided")
 	for stream_name in game.audio.streams:
 		var stream = game.audio.streams[stream_name]
 		expect(stream is AudioStreamWAV, str(stream_name) + " decodes as a WAV audio stream")
@@ -258,6 +259,76 @@ func check_panel_input() -> void:
 	game.audio.set_volumes(0.35, 0.65, 0.2)
 	game.destination = game.player
 
+func check_optional_intro() -> void:
+	var fixture_dir := "user://audio_intro_fixture"
+	var fixture_path := fixture_dir + "/intro_theme.wav"
+	DirAccess.make_dir_recursive_absolute(fixture_dir)
+	game.audio.custom_dir = fixture_dir
+	game.audio.reload_assets()
+	var intro_count := count_event("intro_theme")
+	game.new_game(true)
+	expect(not game.audio.intro_active and count_event("intro_theme") == intro_count, "Without an intro recording, new-game dialogue keeps the normal room score")
+	loop_channels_playing("diner")
+	game.close_dialogue()
+	# This is an original test tone, kept outside the project. It is not the
+	# requested song and is removed before the test finishes.
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = 22050
+	var pcm := PackedByteArray()
+	pcm.resize(11025 * 2)
+	for index in range(11025):
+		pcm.encode_s16(index * 2, int(sin(index * 2.0 * PI * 660.0 / 22050.0) * 4500.0))
+	wav.data = pcm
+	expect(wav.save_to_wav(fixture_path) == OK, "Isolated synthetic intro fixture can be written")
+	game.audio.reload_assets()
+	expect(game.audio.source_paths.get("intro_theme", "") == fixture_path, "Optional intro recording loads from the configured local audio directory")
+	game.new_game(true)
+	expect(game.audio.intro_active and count_event("intro_theme") == intro_count + 1, "New-game opening dialogue starts the optional intro once")
+	expect(game.audio.music_player.playing and game.audio.music_player.stream.data == game.audio.streams["intro_theme"].data, "The music player plays the actual optional intro WAV")
+	expect(game.audio.music_player.stream.loop_mode == AudioStreamWAV.LOOP_DISABLED, "Optional intro is a one-shot rather than a repeating room loop")
+	expect(game.audio.music_player.bus == game.audio.CHANNEL_BUSES["music"], "Optional intro uses the existing music volume channel")
+	expect(game.audio.ambience_player.playing and game.audio.ambience_player.stream.data == game.audio.streams["ambience_diner"].data, "Intro playback preserves the current room ambience")
+	await create_timer(0.75).timeout
+	expect(not game.audio.intro_active and game.dialogue_panel.visible, "Natural intro completion returns the score while leaving opening dialogue readable")
+	loop_channels_playing("diner")
+	game.new_game(true)
+	await press_key(KEY_SPACE)
+	expect(game.audio.intro_active and game.dialogue_panel.visible, "Advancing the first opening line keeps its intro playing")
+	await press_key(KEY_SPACE)
+	expect(not game.audio.intro_active and not game.dialogue_panel.visible, "Dismissing the last opening line restores normal room music")
+	loop_channels_playing("diner")
+	game.new_game(true)
+	await press_key(KEY_ESCAPE)
+	expect(not game.audio.intro_active and not game.dialogue_panel.visible, "Escape skips the intro with the opening dialogue")
+	game.new_game(true)
+	game.close_dialogue()
+	expect(not game.audio.intro_active and game.audio.music_player.stream.data == game.audio.streams["music_diner"].data, "Explicit dialogue dismissal also restores the room score")
+	game.new_game(true)
+	game.enter_room("dock")
+	expect(not game.audio.intro_active, "Entering another room cancels the intro")
+	loop_channels_playing("dock")
+	game.new_game(false)
+	expect(game.save_game(), "Intro cancellation checkpoint can be saved")
+	game.new_game(true)
+	expect(game.audio.intro_active and game.load_game() and not game.audio.intro_active, "Loading the same room cancels an active intro")
+	loop_channels_playing("diner")
+	game.new_game(true)
+	game.audio.set_volume("music", 0.23, false)
+	var music_bus := AudioServer.get_bus_index(game.audio.CHANNEL_BUSES["music"])
+	expect(game.audio.intro_active and is_equal_approx(AudioServer.get_bus_volume_db(music_bus), linear_to_db(0.23)), "Changing music volume adjusts the intro's actual audio bus")
+	game.audio.set_muted(true, false)
+	expect(game.audio.intro_active and AudioServer.is_bus_mute(music_bus), "Mute silences the optional intro through the existing music bus")
+	game.audio.set_muted(false, false)
+	game.new_game(false)
+	expect(not game.audio.intro_active, "Starting without opening dialogue never starts the optional intro")
+	game.audio.set_volumes(0.35, 0.65, 0.2)
+	DirAccess.remove_absolute(fixture_path)
+	game.audio.custom_dir = game.audio.CUSTOM_DIR
+	game.audio.reload_assets()
+	DirAccess.remove_absolute(fixture_dir)
+	game.new_game(false)
+
 func check() -> void:
 	create_timer(40.0).timeout.connect(func():
 		push_error("Audio integration test timed out")
@@ -288,13 +359,14 @@ func check() -> void:
 	await check_settings()
 	check_custom_override()
 	await check_panel_input()
+	await check_optional_intro()
 	AudioServer.remove_bus_effect(0, capture_effect_index)
 	game.queue_free()
 	# AudioServer releases stopped WAV playback on the next mixer update. Give
 	# the Dummy driver time to drain before terminating the integration harness.
 	await create_timer(0.15).timeout
 	if failures == 0:
-		print("PASS: %d audio checks — decoded assets, room loops, mixer output/mute, footsteps, puzzle cues, local overrides, persisted options, modal input" % checks)
+		print("PASS: %d audio checks — decoded assets, room loops, mixer output/mute, footsteps, puzzle cues, local overrides, persisted options, modal input, optional intro lifecycle" % checks)
 	else:
 		push_error("%d of %d audio checks failed" % [failures, checks])
 	quit(0 if failures == 0 else 1)

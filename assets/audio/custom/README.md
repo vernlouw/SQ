@@ -13,6 +13,7 @@ the bundled original sound. Use ordinary PCM WAV or Ogg Vorbis audio.
 | --- | --- |
 | Room music | `music_diner`, `music_dock`, `music_museum` |
 | Room ambience | `ambience_diner`, `ambience_dock`, `ambience_museum` |
+| Optional opening cue | `intro_theme` |
 | Interface | `ui_click`, `dialogue`, `save`, `load` |
 | Interaction | `pickup`, `door`, `terminal`, `combine`, `success`, `blocked` |
 | Movement and ending | `step_a`, `step_b`, `complete` |
@@ -21,6 +22,13 @@ For example, `pickup.wav` replaces only the inventory pickup sound.
 Room music and ambience repeat from start to end, so seamless loops work best.
 Effects play once. The `dialogue` sound is a short, quiet text-advance cue;
 it is not a voice-over track.
+
+`intro_theme.ogg` or `intro_theme.wav` is optional and currently not included.
+When provided, it plays once over the opening dialogue and uses the Music
+volume slider. Natural completion, dismissing the last opening line, or
+pressing Esc returns to the diner score. Entering a room or loading a checkpoint
+also stops the intro. Without this file, the normal diner music plays immediately.
+The specific requested intro tune has not been added to this download yet.
 
 Game archives such as `RESOURCE.MAP` and `RESOURCE.000`, and emulator DLLs,
 are not audio files that this folder can play. This mechanism accepts audio

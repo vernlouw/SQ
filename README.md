@@ -37,6 +37,8 @@ These sounds evoke the synthesizer-era adventure-game feel. **They are newly cre
 
 If you have actual sound recordings you want to use locally, matching WAV or OGG files in [`assets/audio/custom`](assets/audio/custom/README.md) override individual cues. Files not supplied continue using the included original audio. No game resource archives or emulator DLLs need to be copied into this Godot project.
 
+An optional `intro_theme.ogg` or `intro_theme.wav` in that folder plays once during the opening dialogue, then returns to the room score. Dismissing or skipping the dialogue stops it. The specific requested intro tune is **not included yet**; opening the game without that file keeps the original diner music.
+
 ## Walkthrough (spoilers)
 
 1. At Astro-Burger, click the news screen, then click the cook. Get a service chit and permission to take the grease.
@@ -49,7 +51,7 @@ If you have actual sound recordings you want to use locally, matching WAV or OGG
 
 ## Development and verification
 
-The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **88 gameplay checks and 149 audio checks passing**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
+The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **88 gameplay checks and 193 audio checks passing**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
 
 ```sh
 /path/to/Godot --headless --editor --path . --quit
@@ -57,7 +59,7 @@ The project targets Godot **4.4.1** with its Compatibility renderer. Validation 
 /path/to/Godot --headless --audio-driver Dummy --path . --script tests/audio_smoke.gd
 ```
 
-Use a separate `XDG_DATA_HOME` directory when running either smoke test on Linux; they exercise the game's save slot and saved audio preferences. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. It also checks compatibility with earlier saves that granted the mop directly from the locker. Input checks send real mouse and keyboard events through the interface and world hotspots. The audio test additionally checks decoded WAV samples, room loop replacement, actual nonzero PCM from Godot's software mixer and silence while muted, alternating footsteps, real puzzle-event cues without duplicates, local sound overrides, saved volume/mute preferences, and modal input handling. Mixer capture verifies software playback; it does not test a physical speaker device.
+Use a separate `XDG_DATA_HOME` directory when running either smoke test on Linux; they exercise the game's save slot and saved audio preferences. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. It also checks compatibility with earlier saves that granted the mop directly from the locker. Input checks send real mouse and keyboard events through the interface and world hotspots. The audio test additionally checks decoded WAV samples, room loop replacement, actual nonzero PCM from Godot's software mixer and silence while muted, alternating footsteps, real puzzle-event cues without duplicates, local sound overrides, saved volume/mute preferences, modal input handling, and optional intro playback/skip/completion using a temporary synthetic fixture. Mixer capture verifies software playback; it does not test a physical speaker device.
 
 `tests/capture.gd` is an optional screenshot helper and requires a graphical display:
 

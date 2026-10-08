@@ -19,6 +19,7 @@ var music_player: AudioStreamPlayer
 var ambience_player: AudioStreamPlayer
 var effect_players: Array[AudioStreamPlayer] = []
 var current_room := ""
+var intro_active := false
 var event_counts: Dictionary = {}
 var event_log: Array[String] = []
 var room_start_counts: Dictionary = {}
@@ -34,6 +35,7 @@ func _ready() -> void:
 			AudioServer.set_bus_name(AudioServer.bus_count - 1, bus_name)
 			AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
 	music_player = _new_player("RoomMusic", "music")
+	music_player.finished.connect(_on_music_finished)
 	ambience_player = _new_player("RoomAmbience", "ambience")
 	for index in range(EFFECT_PLAYER_COUNT):
 		effect_players.append(_new_player("Effect" + str(index), "effects"))
@@ -130,6 +132,9 @@ func reload_assets() -> void:
 	for room in ROOMS:
 		names.append("music_" + room)
 		names.append("ambience_" + room)
+	# Optional: absence retains the existing room score. No substitute recording
+	# or external download is supplied by this controller.
+	names.append("intro_theme")
 	for id in names:
 		var stream: AudioStream
 		var path := ""
@@ -157,22 +162,64 @@ func _loop_stream(source: AudioStream) -> AudioStream:
 		stream.loop_offset = 0.0
 	return stream
 
+func _one_shot_stream(source: AudioStream) -> AudioStream:
+	var stream := source.duplicate() as AudioStream
+	if stream is AudioStreamWAV:
+		stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	elif stream is AudioStreamOggVorbis:
+		stream.loop = false
+	return stream
+
+func _start_room_music() -> void:
+	var id := "music_" + current_room
+	music_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
+	if music_player.stream != null:
+		music_player.play()
+		_record_event(id)
+
+func play_intro() -> bool:
+	if not streams.has("intro_theme") or current_room == "":
+		return false
+	if intro_active:
+		return true
+	# Reuse the music player so the introduction and room score never overlap.
+	music_player.stop()
+	music_player.stream = _one_shot_stream(streams["intro_theme"])
+	intro_active = true
+	music_player.play()
+	_record_event("intro_theme")
+	return true
+
+func finish_intro() -> void:
+	if not intro_active:
+		return
+	intro_active = false
+	music_player.stop()
+	_start_room_music()
+
+func _on_music_finished() -> void:
+	if intro_active:
+		finish_intro()
+
 func set_room(room: String, restart: bool = false) -> void:
-	if not ROOMS.has(room) or (room == current_room and not restart):
+	if not ROOMS.has(room):
+		return
+	if room == current_room and not restart:
+		finish_intro()
 		return
 	# Stop before assigning the next room: returning to a room never stacks loops.
+	intro_active = false
 	music_player.stop()
 	ambience_player.stop()
 	current_room = room
 	_step_clock = 0.0
 	room_start_counts[room] = int(room_start_counts.get(room, 0)) + 1
-	for channel in ["music", "ambience"]:
-		var player: AudioStreamPlayer = music_player if channel == "music" else ambience_player
-		var id: String = channel + "_" + room
-		player.stream = _loop_stream(streams[id]) if streams.has(id) else null
-		if player.stream != null:
-			player.play()
-			_record_event(id)
+	_start_room_music()
+	var id := "ambience_" + room
+	ambience_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
+	if ambience_player.stream != null:
+		ambience_player.play()
+		_record_event(id)
 
 func _record_event(id: String) -> void:
 	event_counts[id] = int(event_counts.get(id, 0)) + 1

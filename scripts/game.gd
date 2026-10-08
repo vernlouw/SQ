@@ -73,6 +73,7 @@ var speaker_label: Label
 var portrait: TextureRect
 var dialogue_lines: Array[String] = []
 var dialogue_speaker := ""
+var intro_dialogue_active := false
 var finale_panel: Panel
 var audio
 var sound_panel: Panel
@@ -270,6 +271,7 @@ func _input(event: InputEvent) -> void:
 
 func new_game(show_intro: bool = true) -> void:
 	close_sound_panel()
+	intro_dialogue_active = false
 	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
 	player = Vector2(173, 280)
 	destination = player
@@ -282,7 +284,8 @@ func new_game(show_intro: bool = true) -> void:
 	audio.set_room("diner", true)
 	say("A stolen relic. A suspicious clone. First: get out of the diner.")
 	if show_intro:
-		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."])
+		audio.play_intro()
+		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."], true)
 	update_hud()
 	queue_redraw()
 
@@ -334,7 +337,10 @@ func say(line: String) -> void:
 	if is_instance_valid(status_label):
 		status_label.text = line
 
-func show_dialog(speaker: String, lines: Array) -> void:
+func show_dialog(speaker: String, lines: Array, is_intro: bool = false) -> void:
+	if intro_dialogue_active and not is_intro:
+		_finish_intro_dialogue()
+	intro_dialogue_active = is_intro and audio.intro_active
 	dialogue_speaker = speaker
 	dialogue_lines.clear()
 	for line in lines:
@@ -344,6 +350,7 @@ func show_dialog(speaker: String, lines: Array) -> void:
 func _advance_dialog() -> void:
 	if dialogue_lines.is_empty():
 		dialogue_panel.hide()
+		_finish_intro_dialogue()
 		return
 	var line: String = dialogue_lines.pop_front()
 	audio.play_sfx("dialogue")
@@ -356,6 +363,12 @@ func _advance_dialog() -> void:
 func close_dialogue() -> void:
 	dialogue_lines.clear()
 	dialogue_panel.hide()
+	_finish_intro_dialogue()
+
+func _finish_intro_dialogue() -> void:
+	if intro_dialogue_active:
+		intro_dialogue_active = false
+		audio.finish_intro()
 
 func update_hud() -> void:
 	if not is_instance_valid(room_label):
@@ -753,6 +766,7 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 		audio.play_sfx("door")
 	state["room"] = room
 	audio.set_room(room)
+	intro_dialogue_active = false
 	player = position_value
 	destination = player
 	pending_interaction.clear()
@@ -848,6 +862,7 @@ func load_game() -> bool:
 	dialogue_panel.hide()
 	finale_panel.visible = flag("complete")
 	audio.set_room(state["room"])
+	intro_dialogue_active = false
 	audio.update_footsteps(0.0, false)
 	say("Checkpoint restored. " + ROOM_INTROS[state["room"]])
 	audio.play_sfx("load")
