@@ -19,10 +19,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
-    env:
-      XDG_CACHE_HOME: ${{ runner.temp }}/sq-cache
-      XDG_DATA_HOME: ${{ runner.temp }}/sq-data
-      XDG_CONFIG_HOME: ${{ runner.temp }}/sq-config
     steps:
       - name: Check out game source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -33,6 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export XDG_CACHE_HOME="$RUNNER_TEMP/sq-cache"
+          export XDG_DATA_HOME="$RUNNER_TEMP/sq-data"
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/sq-config"
+          echo "XDG_CACHE_HOME=$XDG_CACHE_HOME" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$XDG_DATA_HOME" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/godot" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
           cd "$RUNNER_TEMP/godot"
           release="https://github.com/godotengine/godot/releases/download/4.4.1-stable"
