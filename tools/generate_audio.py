@@ -5,6 +5,7 @@ Requires Python 3 and NumPy. All compositions, synth voices and sound effects
 are made here; no recordings, melodies or sound banks from Space Quest are used.
 Run from anywhere: python3 tools/generate_audio.py
 Generate just the Monolith Burger room: python3 tools/generate_audio.py --only-monolith
+Generate just the six campaign regions: python3 tools/generate_audio.py --only-campaign
 """
 
 from pathlib import Path
@@ -59,6 +60,16 @@ def voice(note, duration, kind="keys"):
         y = .45 * np.sin(phase + .22 * np.sin(phase))
         y += .34 * np.sin(phase * 1.0019) + .06 * np.sin(2 * phase)
         env = envelope(t, duration, .65, .85, .065)
+    elif kind == "brass":
+        # A restrained synthetic horn, with no sampled instruments.
+        phase += .022 * np.sin(TAU * 5.1 * t) * np.minimum(t / .2, 1)
+        y = .48 * np.sin(phase) + .23 * np.sin(2 * phase)
+        y += .12 * np.sin(3 * phase) + .055 * np.sin(4 * phase)
+        env = envelope(t, duration, .044, .18, .36)
+    elif kind == "pluck":
+        y = .65 * np.sin(phase + 1.8 * np.exp(-7.5 * t) * np.sin(2 * phase))
+        y += .25 * np.sin(phase)
+        env = envelope(t, duration, .009, .24, 3.0)
     else:
         raise ValueError(kind)
     return y * env
@@ -290,6 +301,161 @@ def room_tone(kind):
     return np.column_stack((left, right))
 
 
+CAMPAIGN_REGIONS = ("labion", "plexi", "starcon", "polysorbate", "glitzon", "finale")
+
+
+def campaign_score(region):
+    """Six original regional arrangements, all with circular release tails."""
+    tempos = {"labion": (92, 12), "plexi": (120, 16), "starcon": (112, 16),
+              "polysorbate": (88, 12), "glitzon": (116, 16), "finale": (112, 16)}
+    progressions = {
+        "labion": [[50, 57, 60, 64], [46, 53, 57, 62], [43, 53, 57, 62], [45, 55, 59, 64]],
+        "plexi": [[52, 59, 63, 66], [49, 56, 59, 63], [57, 61, 64, 68], [47, 54, 61, 66]],
+        "starcon": [[43, 55, 59, 62], [48, 55, 60, 64], [40, 55, 59, 64], [50, 57, 60, 66]],
+        "polysorbate": [[48, 55, 58, 63], [41, 53, 56, 60], [46, 56, 60, 65], [43, 53, 59, 62]],
+        "glitzon": [[41, 57, 60, 64], [48, 55, 59, 62], [45, 55, 60, 64], [46, 53, 57, 60]],
+        "finale": [[35, 50, 54, 61], [31, 50, 54, 59], [34, 49, 52, 58], [30, 49, 54, 57]],
+    }
+    melodies = {
+        "labion": [[74, 76, 69], [77, 74, 69], [79, 77, 74], [76, 71, 69]],
+        "plexi": [[83, 78, 75, 80], [80, 75, 83, 78], [85, 80, 76, 73], [78, 73, 75, 82]],
+        "starcon": [[67, 71, 74, 72], [76, 72, 67, 64], [71, 76, 74, 67], [69, 66, 74, 62]],
+        "polysorbate": [[75, 72, 70], [72, 68, 65], [77, 72, 70], [71, 74, 68]],
+        "glitzon": [[77, 76, 72, 69], [74, 79, 76, 71], [76, 72, 79, 81], [77, 74, 72, 69]],
+        "finale": [[61, 62, 66], [59, 62, 61], [58, 64, 61], [57, 61, 54]],
+    }
+    bpm, bars = tempos[region]
+    song = Song(bpm, bars)
+    for bar in range(bars):
+        beat = bar * 4
+        chord = progressions[region][bar % 4]
+        melody = melodies[region][bar % 4]
+        root = chord[0]
+        if region == "labion":
+            for i, pitch in enumerate(chord[1:]):
+                song.note(beat + .08 * i, pitch, 5.1, "pad", .065, -.55 + .55 * i)
+            song.note(beat, root - 12, 2.8, "bass", .09)
+            for i, pitch in enumerate(melody):
+                song.note(beat + [.4, 1.8, 3.15][i], pitch, 1.4, "pluck", .092, [-.42, .38, .1][i])
+            song.percussion(beat + 1.5, "tap", .022, -.3)
+            song.percussion(beat + 3.25, "brush", .025, .3)
+        elif region == "plexi":
+            song.note(beat, root - 12, .7, "bass", .11)
+            song.note(beat + 2.5, root - 5, .65, "bass", .095)
+            for i in range(8):
+                pitch = chord[1 + i % 3] + 12
+                song.note(beat + i * .5, pitch, .65, "bell", .055, -.48 if i % 2 else .48)
+            if bar % 2 == 0:
+                for i, pitch in enumerate(melody):
+                    song.note(beat + .25 + i, pitch, .6, "keys", .062, .1)
+            song.percussion(beat, "kick", .065)
+            song.percussion(beat + 2, "brush", .04)
+            for i in range(4):
+                song.percussion(beat + i + .5, "hat", .026, -.2)
+        elif region == "starcon":
+            for i, pitch in enumerate(chord[1:]):
+                song.note(beat, pitch, .75, "brass", .050, -.35 + i * .35)
+            for i, pitch in enumerate(melody):
+                song.note(beat + [0, 1, 2.5, 3.25][i], pitch, .55 if i < 3 else .9, "brass", .10, .1)
+            for i in [0, 2]:
+                song.note(beat + i, root - 12 + (7 if i else 0), .75, "bass", .135)
+                song.percussion(beat + i, "kick", .073)
+            for i in [1, 3]:
+                song.percussion(beat + i, "brush", .060, -.2)
+            for i in range(8):
+                song.percussion(beat + .5 * i, "hat", .017, .25)
+        elif region == "polysorbate":
+            for offset in [.65, 2.35]:
+                for i, pitch in enumerate(chord[1:]):
+                    song.note(beat + offset + .015 * i, pitch, 1.3, "keys", .070, -.4 + .4 * i)
+            for i, pitch in enumerate([root - 12, root - 5, root, root - 10]):
+                song.note(beat + i, pitch, .72, "bass", .125)
+            if bar % 2 == 0:
+                for i, pitch in enumerate(melody):
+                    song.note(beat + [.4, 1.7, 3.2][i], pitch, .85, "lead", .063, .12)
+            song.percussion(beat, "kick", .06)
+            for i in [1, 3]:
+                song.percussion(beat + i, "brush", .043, .25)
+                song.percussion(beat + i + .65, "hat", .024, -.2)
+        elif region == "glitzon":
+            for offset in [.25, 2.5]:
+                for i, pitch in enumerate(chord[1:]):
+                    song.note(beat + offset + .02 * i, pitch, 1.3, "keys", .064, -.4 + i * .4)
+            for i, pitch in enumerate(melody):
+                song.note(beat + [0, 1.25, 2.25, 3.5][i], pitch, .9, "keys", .13, .12)
+            song.note(beat, root - 12, .85, "bass", .13)
+            song.note(beat + 2, root - 5, .8, "bass", .10)
+            if bar % 4 == 3:
+                song.note(beat + 3, chord[-1] + 24, 1.5, "bell", .028, -.4)
+            for i in [0, 2]:
+                song.percussion(beat + i, "kick", .065)
+            for i in [1, 3]:
+                song.percussion(beat + i, "brush", .048, .15)
+        else:
+            for i, pitch in enumerate(chord[1:]):
+                song.note(beat + .04 * i, pitch, 5.2, "pad", .075, -.5 + .5 * i)
+            for i in range(8):
+                song.note(beat + i * .5, root + (7 if i % 3 == 2 else 0), .34, "bass", .10, -.1)
+            for i, pitch in enumerate(melody):
+                song.note(beat + [.5, 2, 3.3][i], pitch, 1.1, "bell", .045, .3)
+            song.percussion(beat, "kick", .09)
+            song.percussion(beat + 2.75, "tap", .035, -.3)
+            song.percussion(beat + 3.5, "brush", .025, .25)
+    return song.audio
+
+
+def campaign_tone(region):
+    """Periodic environmental beds; jungle birds are synthesized chirps."""
+    bed = Song(20, 1)  # Twelve seconds, including events wrapping the seam.
+    n = bed.frames
+    t = np.arange(n) / RATE
+    frequencies = np.fft.rfftfreq(n, 1 / RATE)
+    white = RNG.normal(0, 1, n)
+    cutoff = {"labion": 480, "plexi": 190, "starcon": 135,
+              "polysorbate": 260, "glitzon": 155, "finale": 85}[region]
+    spectrum = np.fft.rfft(white) / (1 + (frequencies / cutoff) ** 6)
+    spectrum[0] = 0
+    air = np.fft.irfft(spectrum, n=n)
+    air /= max(np.sqrt(np.mean(air * air)), 1e-9)
+    base = {"labion": 45, "plexi": 72, "starcon": 60,
+            "polysorbate": 42, "glitzon": 110, "finale": 35}[region]
+    hum = .38 * np.sin(TAU * base * t) + .09 * np.sin(TAU * base * 2 * t)
+    hum *= .9 + .1 * np.sin(TAU * t / 12)
+    bed.audio[:, 0] = (.07 if region == "labion" else .55) * hum + .22 * air
+    bed.audio[:, 1] = (.07 if region == "labion" else .55) * hum + .22 * np.roll(air, 1800)
+    if region in ("labion", "polysorbate", "finale"):
+        hiss = np.fft.rfft(white)
+        hiss *= frequencies ** 2 / (frequencies ** 2 + 400 ** 2)
+        hiss *= 1 / (1 + (frequencies / 2800) ** 8)
+        hiss = np.fft.irfft(hiss, n=n)
+        hiss /= max(np.sqrt(np.mean(hiss * hiss)), 1e-9)
+        gain = .11 if region == "labion" else .025
+        bed.audio[:, 0] += gain * hiss
+        bed.audio[:, 1] += gain * np.roll(hiss, 700)
+    if region == "labion":
+        for start, pitch, pan in [(1.7, 1800, -.55), (5.8, 2250, .5), (9.4, 1560, -.2)]:
+            chirp_t = np.arange(round(.42 * RATE)) / RATE
+            chirp = np.sin(TAU * (pitch * chirp_t + 440 * chirp_t ** 2))
+            chirp *= envelope(chirp_t, .42, .014, .15) * (.6 + .4 * np.sin(TAU * 8 * chirp_t))
+            bed.event(start, chirp, .080, pan)
+    elif region == "plexi":
+        bed.event(3.4, voice(88, 1.4, "bell"), .044, -.3)
+        bed.event(8.3, voice(84, 1.4, "bell"), .039, .3)
+    elif region == "starcon":
+        bed.event(6.4, voice(67, .25, "keys"), .025, .3)
+        bed.event(6.8, voice(72, .35, "keys"), .025, .3)
+    elif region == "polysorbate":
+        neon = .065 * np.sin(TAU * 180 * t) * (.8 + .2 * np.sin(TAU * t / 6))
+        bed.audio += neon[:, None]
+    elif region == "glitzon":
+        bed.event(9.2, voice(89, 1.8, "bell"), .027, -.35)
+    else:
+        machinery = .095 * np.sin(TAU * 47.5 * t) + .035 * np.sin(TAU * 190 * t)
+        bed.audio += machinery[:, None]
+        bed.event(5.7, drum("tap", .22), .041, -.3)
+    return bed.audio
+
+
 def effect(notes=None, duration=.45):
     audio = np.zeros((round(duration * RATE), 2))
     if notes:
@@ -385,10 +551,12 @@ def main():
     global RNG
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="Print validation as JSON.")
-    parser.add_argument("--only-monolith", action="store_true", help="Write only the new room's music and ambience; preserve all other recordings.")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--only-monolith", action="store_true", help="Write only the Monolith room's music and ambience; preserve all other recordings.")
+    selection.add_argument("--only-campaign", action="store_true", help="Write only the six regional scores and ambience beds; preserve all other recordings.")
     args = parser.parse_args()
     reports = []
-    if not args.only_monolith:
+    if not args.only_monolith and not args.only_campaign:
         # Preserve the legacy synthesis order and seed for the existing cues.
         for room, generator in [("diner", diner), ("dock", dock), ("museum", museum)]:
             reports.append(write_asset("music_" + room, generator(), .09, .45))
@@ -398,9 +566,16 @@ def main():
     # The added room has its own deterministic seed, independent of whether
     # older assets were generated in the same run. Supplied title cues are
     # never outputs of this synthesis script.
-    RNG = np.random.default_rng(74220)
-    reports.append(write_asset("music_monolith", monolith(), .09, .45))
-    reports.append(write_asset("ambience_monolith", room_tone("monolith"), .036, .16))
+    if not args.only_campaign:
+        RNG = np.random.default_rng(74220)
+        reports.append(write_asset("music_monolith", monolith(), .09, .45))
+        reports.append(write_asset("ambience_monolith", room_tone("monolith"), .036, .16))
+    if not args.only_monolith:
+        for index, region in enumerate(CAMPAIGN_REGIONS):
+            # Regional seeds isolate regeneration from every older asset.
+            RNG = np.random.default_rng(74300 + index)
+            reports.append(write_asset("music_" + region, campaign_score(region), .085, .40))
+            reports.append(write_asset("ambience_" + region, campaign_tone(region), .036, .16))
     if args.report:
         print(json.dumps({"rate": RATE, "channels": 2, "format": "PCM16", "assets": reports}, indent=2))
     else:

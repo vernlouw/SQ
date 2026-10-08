@@ -24,10 +24,14 @@ func act(target: String, action := "Use", item := "") -> void:
 	game.perform_action(target, action, item)
 	game.close_dialogue()
 
-func write_legacy_checkpoint() -> void:
+func write_legacy_checkpoint(old_finished_build := false) -> void:
 	# Earlier chapter builds put the mop straight into inventory at the locker.
 	var snapshot: Dictionary = game.state.duplicate(true)
 	snapshot["flags"].erase("mop_taken")
+	if old_finished_build:
+		snapshot["flags"].erase("chapter_one_complete")
+		snapshot["flags"]["complete"] = true
+		snapshot["room"] = "dock"
 	snapshot["player"] = [game.player.x, game.player.y]
 	var file := FileAccess.open(game.SAVE_PATH, FileAccess.WRITE)
 	expect(file != null, "Legacy checkpoint fixture can be written to the isolated test save slot")
@@ -239,20 +243,20 @@ func check() -> void:
 	act("shuttle")
 	game.choose_destination("labion")
 	game.finish_flight()
-	expect(flag("complete"), "Programmed Labion shuttle flight completes the chapter")
+	expect(flag("chapter_one_complete") and not flag("complete") and game.state["room"] == "labion_dock" and game.state["score"] == 100, "The programmed shuttle completes the opening and reaches playable Labion at 100 points")
 	expect(game.save_game(), "Saving the completed chapter succeeds")
 	game.new_game(false)
-	expect(not flag("complete"), "New game resets the ending")
-	expect(game.load_game() and flag("complete"), "Loading completed progress restores the ending")
-	expect(game.finale_panel.visible, "Loading completed progress displays the chapter ending")
-	write_legacy_checkpoint()
+	expect(not flag("chapter_one_complete") and not flag("complete"), "New game resets opening and campaign completion")
+	expect(game.load_game() and flag("chapter_one_complete") and not flag("complete"), "Loading opening completion restores the continuing adventure")
+	expect(not game.finale_panel.visible and game.state["room"] == "labion_dock", "Loading completed opening progress shows playable Labion and no campaign finale")
+	write_legacy_checkpoint(true)
 	game.new_game(false)
-	expect(game.load_game() and flag("complete") and flag("mop_taken"), "Legacy completed save marks the consumed mop as taken and restores the ending")
+	expect(game.load_game() and flag("chapter_one_complete") and not flag("complete") and flag("mop_taken") and game.state["room"] == "dock" and game.state["score"] == 100, "Legacy completed opening saves migrate to a continuing 100-point dock checkpoint without resurrecting the consumed mop")
 	game.close_dialogue()
 	game.new_game(false)
 	expect(game.selected.is_empty() and game.pending_interaction.is_empty() and game.verb == "Interact", "New game clears selected inventory and pending movement and restores automatic interactions")
 	if failures == 0:
-		print("PASS: %d checks — three rooms, blocked progression, mouse routing, inventory puzzles, save/load/reset, chapter ending" % checks)
+		print("PASS: %d checks — opening puzzle chain, blocked progression, mouse routing, inventory puzzles, save/load/reset, playable Labion continuation" % checks)
 	else:
 		push_error("%d of %d smoke checks failed" % [failures, checks])
 	game.queue_free()

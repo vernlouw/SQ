@@ -7,6 +7,15 @@ const CUSTOM_DIR := "res://assets/audio/custom"
 const CHANNEL_BUSES := {"music": "SQMusic", "effects": "SQEffects", "ambience": "SQAmbience"}
 const DEFAULT_SETTINGS := {"music": 0.35, "effects": 0.65, "ambience": 0.20, "muted": false}
 const ROOMS := ["diner", "dock", "museum", "monolith"]
+const THEMES := ["diner", "dock", "museum", "monolith", "labion", "plexi", "starcon", "polysorbate", "glitzon", "finale"]
+const ROOM_THEMES := {
+	"labion_dock": "labion", "labion_jungle": "labion", "labion_bog": "labion", "labion_gate": "labion", "labion_shrine": "labion",
+	"monolith_berth": "monolith", "monolith_kitchen": "monolith", "monolith_freezer": "monolith", "monolith_arcade": "monolith",
+	"plexi_dock": "plexi", "plexi_plaza": "plexi", "plexi_gallery": "plexi", "plexi_control": "plexi", "plexi_vault": "plexi",
+	"starcon_dock": "starcon", "starcon_hall": "starcon", "starcon_class": "starcon", "starcon_simulator": "starcon", "starcon_lab": "starcon",
+	"polysorbate_dock": "polysorbate", "polysorbate_market": "polysorbate", "polysorbate_alley": "polysorbate",
+	"glitzon_dock": "glitzon", "glitzon_boulevard": "glitzon", "glitzon_vault": "glitzon", "clone_chamber": "finale"
+}
 const EFFECTS := ["ui_click", "pickup", "door", "terminal", "combine", "success", "blocked", "save", "load", "complete", "dialogue", "step_a", "step_b"]
 const STEP_INTERVAL := 0.28
 const EFFECT_PLAYER_COUNT := 8
@@ -133,7 +142,7 @@ func reload_assets() -> void:
 	streams.clear()
 	source_paths.clear()
 	var names: Array = EFFECTS.duplicate()
-	for room in ROOMS:
+	for room in THEMES:
 		names.append("music_" + room)
 		names.append("ambience_" + room)
 	# Supplied introduction recordings are optional. Local custom cues can
@@ -182,14 +191,14 @@ func _one_shot_stream(source: AudioStream) -> AudioStream:
 	return stream
 
 func _start_room_music() -> void:
-	var id := "music_" + current_room
+	var id := "music_" + str(ROOM_THEMES.get(current_room, current_room))
 	music_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
 	if music_player.stream != null:
 		music_player.play()
 		_record_event(id)
 
 func _start_room_ambience() -> void:
-	var id := "ambience_" + current_room
+	var id := "ambience_" + str(ROOM_THEMES.get(current_room, current_room))
 	ambience_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
 	if ambience_player.stream != null:
 		ambience_player.play()
@@ -262,7 +271,7 @@ func _on_music_finished() -> void:
 		_play_next_intro()
 
 func set_room(room: String, restart: bool = false) -> void:
-	if not ROOMS.has(room):
+	if not ROOMS.has(room) and not ROOM_THEMES.has(room):
 		return
 	if room == current_room and not restart:
 		finish_intro()

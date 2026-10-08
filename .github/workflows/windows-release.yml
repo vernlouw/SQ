@@ -57,11 +57,11 @@ jobs:
         run: |
           set -euo pipefail
           "$GODOT" --headless --path "$GITHUB_WORKSPACE" --import
-          for suite in tests/smoke.gd tests/audio_smoke.gd tests/room_bits_smoke.gd tests/burger_shift_smoke.gd tests/travel_smoke.gd; do
+          for suite in tests/smoke.gd tests/audio_smoke.gd tests/room_bits_smoke.gd tests/burger_shift_smoke.gd tests/travel_smoke.gd tests/campaign_smoke.gd tests/campaign_ui_smoke.gd; do
             suite_name="$(basename "$suite" .gd)"
             mkdir -p "$RUNNER_TEMP/test-data/$suite_name" "$RUNNER_TEMP/test-config/$suite_name"
             log="$RUNNER_TEMP/$suite_name.log"
-            if [ "$suite_name" = burger_shift_smoke ]; then
+            if [ "$suite_name" = burger_shift_smoke ] || [ "$suite_name" = campaign_ui_smoke ]; then
               if ! command -v xvfb-run >/dev/null 2>&1; then
                 sudo apt-get update
                 sudo apt-get install -y xvfb libgl1-mesa-dri
@@ -98,14 +98,17 @@ jobs:
               root.add_child(game)
               await process_frame
               assert(game.title_is_open())
-              assert(game.audio.streams.size() == 23)
+              assert(game.audio.streams.size() == 35)
               assert(game.audio.streams["intro_fanfare"].get_length() > 18.0)
               assert(game.audio.streams["intro_theme"].get_length() > 330.0)
-              for room_id in ["diner", "dock", "museum", "monolith"]:
+              var campaign = load("res://scripts/campaign.gd")
+              assert(campaign.ROOM_NAMES.size() == 30)
+              assert(game.ROOM_NAMES.size() == 30)
+              for room_id in campaign.ROOM_NAMES:
                   assert(load("res://assets/room_" + room_id + ".png") is Texture2D)
               assert(load("res://assets/flight_monolith.png") is Texture2D)
               assert(load("res://assets/flight_labion.png") is Texture2D)
-              for script_id in ["room_bits", "bit_visuals", "burger_shift", "shuttle_travel"]:
+              for script_id in ["room_bits", "bit_visuals", "burger_shift", "shuttle_travel", "campaign"]:
                   assert(load("res://scripts/" + script_id + ".gd") is Script)
               assert(not ResourceLoader.exists("res://tests/smoke.gd"))
               assert(not ResourceLoader.exists("res://preview.png"))
@@ -146,7 +149,60 @@ jobs:
               assert(game.flight_is_active())
               game.finish_flight()
               assert(game.state["room"] == "dock")
-              print("PASS: embedded game pack, music, four rooms, Monolith flight and burger shift")
+              game.close_dialogue()
+              game.state["flags"]["coordinates_set"] = true
+              game.state["score"] = 90
+              game.open_travel_menu()
+              assert(game.choose_destination("labion"))
+              assert(game.flight_is_active())
+              game.finish_flight()
+              assert(game.state["room"] == "labion_dock")
+              assert(game.flag("chapter_one_complete"))
+              assert(game.state["score"] == 100)
+              assert(not game.flag("complete"))
+              assert(not game.finale_panel.visible)
+              game.close_dialogue()
+              game.perform_action("pickup", "Use")
+              assert(game.has_item("empty flask"))
+              game.close_dialogue()
+              game.open_inventory()
+              assert(game.inventory_is_open())
+              assert(game.inventory_grid_buttons.has("empty flask"))
+              game.close_inventory()
+              game.enter_room("labion_bog")
+              game.close_dialogue()
+              var retry_state = game.state.duplicate(true)
+              game.perform_action("object", "Use")
+              assert(game.death_is_open())
+              game.retry_death()
+              assert(not game.death_is_open())
+              assert(game.state == retry_state)
+              game.close_dialogue()
+              for room_id in ["plexi_plaza", "starcon_class", "polysorbate_market", "glitzon_boulevard"]:
+                  game.enter_room(room_id)
+                  game.perform_action("object", "Look")
+                  assert(game.dialogue_panel.visible)
+                  game.close_dialogue()
+              game.new_game(false)
+              game.state["score"] = 280
+              for artifact in campaign.ARTIFACTS:
+                  game.add_item(artifact)
+              game.add_item("fryer sludge")
+              game.enter_room("clone_chamber")
+              game.perform_action("object", "Use")
+              game.close_dialogue()
+              game.perform_action("object", "Use", "fryer sludge")
+              game.close_dialogue()
+              game.perform_action("pickup", "Use")
+              game.close_dialogue()
+              game.perform_action("object", "Use")
+              assert(game.flag("complete"))
+              assert(game.state["score"] == 300)
+              assert(game.finale_panel.visible)
+              assert(game.has_item("mop of destiny"))
+              for artifact in campaign.ARTIFACTS:
+                  assert(game.has_item(artifact))
+              print("PASS: 30 packed rooms, 35 audio cues, Labion continuation, inventory, Retry and finale fixture")
               game.queue_free()
               await process_frame
               await process_frame
@@ -156,6 +212,11 @@ jobs:
           env XDG_DATA_HOME="$RUNNER_TEMP/packed-data" timeout 45s "$GODOT" --headless --audio-driver Dummy --path "$RUNNER_TEMP/empty-project" --main-pack "$GITHUB_WORKSPACE/exports/windows/SpaceQuestVII.exe" --script "$RUNNER_TEMP/packed-smoke.gd" 2>&1 | tee "$RUNNER_TEMP/packed.log"
           if grep -Eq 'SCRIPT ERROR|ERROR:' "$RUNNER_TEMP/packed.log"; then exit 1; fi
           grep -q 'PASS:' "$RUNNER_TEMP/packed.log"
+          cp tests/campaign_smoke.gd "$RUNNER_TEMP/campaign-packed-smoke.gd"
+          mkdir -p "$RUNNER_TEMP/packed-campaign-data" "$RUNNER_TEMP/packed-campaign-config"
+          env XDG_DATA_HOME="$RUNNER_TEMP/packed-campaign-data" XDG_CONFIG_HOME="$RUNNER_TEMP/packed-campaign-config" timeout 180s "$GODOT" --headless --audio-driver Dummy --path "$RUNNER_TEMP/empty-project" --main-pack "$GITHUB_WORKSPACE/exports/windows/SpaceQuestVII.exe" --script "$RUNNER_TEMP/campaign-packed-smoke.gd" 2>&1 | tee "$RUNNER_TEMP/packed-campaign.log"
+          if grep -Eq 'SCRIPT ERROR|ERROR:' "$RUNNER_TEMP/packed-campaign.log"; then exit 1; fi
+          grep -q 'PASS:' "$RUNNER_TEMP/packed-campaign.log"
 
       - name: Package Windows download
         shell: bash
@@ -181,7 +242,7 @@ jobs:
           assert binary[-4:] == b"GDPC"
           (folder / "README.txt").write_text(
               "SPACE QUEST VII: MOPOCALYPSE NOW\n"
-              "Windows edition - Chapter One: The Mop Job\n\n"
+              "Windows edition - 30 playable screens / 300 points\n\n"
               f"Source revision: {os.environ['GITHUB_SHA']}\n\n"
               "HOW TO PLAY\n"
               "1. Extract this entire ZIP into a folder.\n"
@@ -190,14 +251,23 @@ jobs:
               "CONTROLS\n"
               "Left-click the floor to walk; click people to talk and objects to interact.\n"
               "Right-click an object to inspect it. Click an inventory item, then its target.\n"
-              "Sound or M opens audio controls. F5 saves, F9 loads, and H shows a hint.\n\n"
+              "I opens your full inventory. Sound or M opens audio controls.\n"
+              "F5 saves, F9 loads, and H shows a hint.\n\n"
               "Tab highlights clickable objects. Explore them for optional jokes.\n\n"
+              "THE STORY\n"
+              "Recover six legendary cleaning artifacts and stop R0-GER's universal wipe.\n"
+              "The opening museum investigation leads to Labion, Monolith's back rooms,\n"
+              "Plexi-Prime, StarCon, Polysorbate LX, Glitzon and the clone's final chamber.\n"
+              "Shuttle routes unlock as you solve each region's puzzles.\n"
+              "Comic failures offer Retry and preserve your puzzle progress.\n"
+              "STORY_30_SCREENS.md lists all 30 screens and contains a full walkthrough.\n"
+              "The walkthrough includes spoilers; open it when you want help or a breakdown.\n\n"
               "MONOLITH BURGER SIDE QUEST\n"
               "At Service Dock 7, click the shuttle and choose Monolith Burger.\n"
               "After the flight, explore the restaurant and take its relief shift.\n"
               "You can retry freely. Use the earned COUPON on the manager for your meal.\n"
-              "Click the shuttle to fly back to Service Dock 7 and resume the main quest.\n"
-              "This optional job does not change the main story's /100 score.\n\n"
+              "Use the berth's shuttle to return or follow your next unlocked route.\n"
+              "This optional job does not change the main story's /300 score.\n\n"
               "REQUIREMENTS\n"
               "64-bit Windows 10 or 11, with an OpenGL 3.3 compatible graphics driver.\n\n"
               "Game saves and audio preferences are stored in your Windows user account.\n"
@@ -207,8 +277,9 @@ jobs:
               encoding="utf-8",
           )
           archive = Path("exports/SpaceQuestVII-Windows.zip")
+          (folder / "STORY_30_SCREENS.md").write_bytes(Path("docs/STORY_30_SCREENS.md").read_bytes())
           with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-              for name in ["SpaceQuestVII.exe", "README.txt", "LICENSE-Godot.txt", "COPYRIGHT-Godot.txt"]:
+              for name in ["SpaceQuestVII.exe", "README.txt", "STORY_30_SCREENS.md", "LICENSE-Godot.txt", "COPYRIGHT-Godot.txt"]:
                   bundle.write(folder / name, name)
           with zipfile.ZipFile(archive) as bundle:
               assert bundle.testzip() is None
@@ -239,7 +310,7 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
           Download **SpaceQuestVII-Windows.zip**, extract it, and double-click **SpaceQuestVII.exe**. Godot is not required.
 
-          This build includes the opening chapter and a fourth Monolith Burger restaurant room reached by shuttle flight, an optional burger relief shift, interactive jokes, and supplied SQ5/SQ6 introduction recordings. The full story is still in development.
+          This build contains a complete 300-point campaign across 30 playable rooms, six legendary artifacts, interplanetary shuttle travel, regional puzzles, optional Monolith Burger work, comic Retry scenes and supplied SQ5/SQ6 introduction recordings. The ZIP includes the 30-screen breakdown and complete walkthrough in STORY_30_SCREENS.md.
 
           The source and embedded game pack passed the automated Linux Godot checks. Native Windows launch has not yet been tested here.
           NOTES

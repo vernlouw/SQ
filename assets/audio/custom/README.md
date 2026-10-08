@@ -14,6 +14,8 @@ the bundled original sound. Use ordinary PCM WAV or Ogg Vorbis audio.
 | --- | --- |
 | Room music | `music_diner`, `music_dock`, `music_museum`, `music_monolith` |
 | Room ambience | `ambience_diner`, `ambience_dock`, `ambience_museum`, `ambience_monolith` |
+| Regional music | `music_labion`, `music_plexi`, `music_starcon`, `music_polysorbate`, `music_glitzon`, `music_finale` |
+| Regional ambience | `ambience_labion`, `ambience_plexi`, `ambience_starcon`, `ambience_polysorbate`, `ambience_glitzon`, `ambience_finale` |
 | Title recordings | `intro_fanfare`, `intro_theme` |
 | Interface | `ui_click`, `dialogue`, `save`, `load` |
 | Interaction | `pickup`, `door`, `terminal`, `combine`, `success`, `blocked` |

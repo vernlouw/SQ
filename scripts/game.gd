@@ -1,5 +1,5 @@
 extends Node2D
-## A four-room adventure chapter with an optional shuttle trip. Puzzle actions are
+## A thirty-screen adventure. Puzzle actions are
 ## exposed through perform_action so the walkthrough can run without rendering.
 
 const SAVE_PATH := "user://the_mop_job_save.json"
@@ -8,15 +8,16 @@ const RoomBits := preload("res://scripts/room_bits.gd")
 const BitVisuals := preload("res://scripts/bit_visuals.gd")
 const BurgerShift := preload("res://scripts/burger_shift.gd")
 const ShuttleTravel := preload("res://scripts/shuttle_travel.gd")
+const Campaign := preload("res://scripts/campaign.gd")
+const CAMPAIGN_ENDING := [
+	"You shut down the apparatus and recover the five captured artifacts. All six legendary tools are safe. The universe retains its stains, its inhabitants, and its regrettable burger franchises.",
+	"R0-GER is sentenced to an eternity of cleaning his own mess. Your reward is a promotion to Acting Temporary Assistant Senior Janitor, with no change in pay.",
+	"Roger Wilco has saved the galaxy again. Somewhere, a dirty table awaits. THE END."
+]
 const VERBS := ["Look", "Use", "Talk"]
 const KEY_ACTIONS := ["Interact", "Look", "Use", "Talk"]
-const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM", "monolith": "MONOLITH BURGER"}
-const ROOM_INTROS := {
-	"diner": "Your shift ended three hours ago. Naturally, the universe waited until now to need a janitor.",
-	"dock": "A dock inspector, a grounded shuttle, and an impressive backlog of paperwork. Home sweet bureaucracy.",
-	"museum": "The museum's priceless navigation archive is guarded by a machine with very strong opinions about cleanliness.",
-	"monolith": "Monolith Burger. Billions served, several identified. Your shuttle is waiting at the berth on the right."
-}
+const ROOM_NAMES := Campaign.ROOM_NAMES
+const ROOM_INTROS := Campaign.ROOM_INTROS
 const INVENTORY_NAMES := {"service chit": "Service chit", "grease": "Fryer grease", "keycard": "Dock keycard", "maintenance pass": "Maintenance pass", "mop": "Service mop", "cleaner": "Ion cleaner", "charged mop": "Charged mop", "star map": "Star map", "novelty badge": "Souvenir novelty badge", "monolith coupon": "Monolith Burger meal coupon"}
 const ITEM_SHORT := {"service chit": "CHIT", "grease": "GREASE", "keycard": "CARD", "maintenance pass": "PASS", "mop": "MOP", "cleaner": "CLEANER", "charged mop": "ION MOP", "star map": "MAP", "novelty badge": "BADGE", "monolith coupon": "COUPON"}
 const HOTSPOTS := {
@@ -80,6 +81,18 @@ var hotspots: Dictionary:
 			result[id] = objects[id]["rect"]
 		return result
 var inventory_container: HBoxContainer
+var inventory_scroll: ScrollContainer
+var inventory_shade: ColorRect
+var inventory_panel: Panel
+var inventory_grid: GridContainer
+var inventory_grid_buttons: Dictionary = {}
+var inventory_close_button: Button
+var death_shade: ColorRect
+var death_panel: Panel
+var death_text: Label
+var death_retry_button: Button
+var death_return_position := Vector2.ZERO
+var finale_text: Label
 var dialogue_panel: Panel
 var dialogue_text: Label
 var speaker_label: Label
@@ -119,6 +132,8 @@ func _ready() -> void:
 		var path: String = "res://assets/" + name + ".png"
 		if ResourceLoader.exists(path):
 			textures[name] = load(path)
+	for room_id in ROOM_NAMES:
+		_load_room_texture(room_id)
 	if textures.has("room_monolith"):
 		var manager_portrait := AtlasTexture.new()
 		manager_portrait.atlas = textures["room_monolith"]
@@ -140,6 +155,20 @@ func _panel_style(fill: Color, border: Color = Color("47667b"), radius: int = 5)
 	style.content_margin_bottom = 4
 	return style
 
+func _load_room_texture(room: String) -> void:
+	var id := "room_" + room
+	if textures.has(id):
+		return
+	var path := "res://assets/" + id + ".png"
+	if ResourceLoader.exists(path):
+		textures[id] = load(path)
+
+func item_name(item: String) -> String:
+	return str(INVENTORY_NAMES.get(item, Campaign.ITEM_NAMES.get(item, item)))
+
+func item_short(item: String) -> String:
+	return str(ITEM_SHORT.get(item, Campaign.ITEM_SHORT.get(item, item)))
+
 func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Callable, parent: Node = hud) -> Button:
 	var button := Button.new()
 	button.text = text_value
@@ -156,6 +185,10 @@ func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Ca
 		if sound_is_open() and parent != sound_panel:
 			return
 		if burger_is_open() and parent != burger_panel and parent != sound_panel:
+			return
+		if death_is_open() and parent != death_panel:
+			return
+		if inventory_is_open() and parent != inventory_panel and parent != inventory_grid and parent != sound_panel:
 			return
 		if flight_is_active() or (travel_is_open() and parent != sound_panel):
 			return
@@ -199,12 +232,22 @@ func _build_ui() -> void:
 		button.tooltip_text = str(index + 2) + " — " + action + "; click again for automatic interaction."
 		verb_buttons.append(button)
 	_label("Click to interact • Right-click inspect • Tab hints", Vector2(12, 383), Vector2(251, 15), 9)
-	_label("POCKETS", Vector2(264, 343), Vector2(340, 17), 9)
+	var pockets_button := _button("Pockets · I", Vector2(264, 337), Vector2(92, 20), open_inventory)
+	pockets_button.add_theme_font_size_override("font_size", 9)
+	pockets_button.size = Vector2(92, 20)
 	inventory_container = HBoxContainer.new()
 	inventory_container.position = Vector2(264, 361)
 	inventory_container.size = Vector2(363, 27)
 	inventory_container.add_theme_constant_override("separation", 4)
-	hud.add_child(inventory_container)
+	inventory_scroll = ScrollContainer.new()
+	inventory_scroll.position = Vector2(264, 359)
+	inventory_scroll.size = Vector2(307, 41)
+	inventory_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	inventory_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	inventory_container.position = Vector2.ZERO
+	inventory_container.size = Vector2.ZERO
+	hud.add_child(inventory_scroll)
+	inventory_scroll.add_child(inventory_container)
 	dialogue_panel = Panel.new()
 	dialogue_panel.position = Vector2(24, 40)
 	dialogue_panel.size = Vector2(592, 124)
@@ -225,15 +268,16 @@ func _build_ui() -> void:
 	dialogue_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dialogue_panel.hide()
 	finale_panel = Panel.new()
-	finale_panel.position = Vector2(86, 63)
-	finale_panel.size = Vector2(468, 231)
+	finale_panel.position = Vector2(64, 45)
+	finale_panel.size = Vector2(512, 296)
 	finale_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.025, 0.065, 0.11, 0.98), Color("d7b576"), 10))
 	hud.add_child(finale_panel)
-	_label("CHAPTER COMPLETE", Vector2(28, 20), Vector2(414, 24), 13, finale_panel).add_theme_color_override("font_color", Color("efca84"))
-	_label("THE MOP JOB", Vector2(28, 47), Vector2(414, 41), 30, finale_panel)
-	var ending := _label("The archive is safe. The clone is on Labion.\n\nYou point the courier toward the orange planet and wonder whether overtime covers saving the galaxy.\n\nFour locations, one optional burger shift. The chase continues…", Vector2(28, 99), Vector2(412, 106), 13, finale_panel)
-	ending.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_button("Play again", Vector2(313, 197), Vector2(126, 25), func(): new_game(), finale_panel)
+	_label("GALAXY SAVED", Vector2(28, 20), Vector2(414, 24), 13, finale_panel).add_theme_color_override("font_color", Color("efca84"))
+	_label("MOPOCALYPSE AVERTED", Vector2(28, 47), Vector2(414, 41), 23, finale_panel)
+	finale_text = _label("", Vector2(28, 99), Vector2(456, 144), 11, finale_panel)
+	finale_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	finale_text.size = Vector2(456, 144)
+	_button("Play again", Vector2(357, 257), Vector2(126, 27), func(): new_game(), finale_panel)
 	finale_panel.hide()
 	sound_button = _button("Sound", Vector2(577, 376), Vector2(50, 22), toggle_sound_panel)
 	sound_button.add_theme_font_size_override("font_size", 9)
@@ -241,6 +285,8 @@ func _build_ui() -> void:
 	sound_button.tooltip_text = "Music, effects and ambience — M"
 	_build_title_panel()
 	_build_burger_panel()
+	_build_inventory_panel()
+	_build_death_panel()
 	travel = ShuttleTravel.new()
 	hud.add_child(travel)
 	travel.setup(self)
@@ -270,11 +316,137 @@ func _build_burger_panel() -> void:
 	burger_panel.hide()
 	burger_shade.hide()
 
+func _build_inventory_panel() -> void:
+	inventory_shade = ColorRect.new()
+	inventory_shade.size = Vector2(640, 400)
+	inventory_shade.color = Color(0.02, 0.03, 0.045, 0.76)
+	inventory_shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	hud.add_child(inventory_shade)
+	inventory_panel = Panel.new()
+	inventory_panel.position = Vector2(38, 45)
+	inventory_panel.size = Vector2(564, 308)
+	inventory_panel.add_theme_stylebox_override("panel", _panel_style(Color("102331"), Color("e3b266"), 8))
+	inventory_shade.add_child(inventory_panel)
+	_label("ROGER'S POCKETS", Vector2(18, 14), Vector2(410, 27), 20, inventory_panel)
+	_label("Choose an item to use. Choose another item to combine them.", Vector2(18, 47), Vector2(526, 22), 10, inventory_panel)
+	inventory_close_button = _button("Close", Vector2(468, 15), Vector2(77, 29), close_inventory, inventory_panel)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(18, 77)
+	scroll.size = Vector2(528, 210)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	inventory_panel.add_child(scroll)
+	inventory_grid = GridContainer.new()
+	inventory_grid.columns = 2
+	inventory_grid.add_theme_constant_override("h_separation", 8)
+	inventory_grid.add_theme_constant_override("v_separation", 7)
+	scroll.add_child(inventory_grid)
+	inventory_shade.hide()
+
+func inventory_is_open() -> bool:
+	return is_instance_valid(inventory_shade) and inventory_shade.visible
+
+func open_inventory() -> void:
+	if title_is_open() or dialogue_panel.visible or sound_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or death_is_open() or flag("complete"):
+		return
+	for child in inventory_grid.get_children():
+		inventory_grid.remove_child(child)
+		child.queue_free()
+	inventory_grid_buttons.clear()
+	for item_value in state.get("inventory", []):
+		var item := str(item_value)
+		var button := _button(item_name(item), Vector2.ZERO, Vector2.ZERO, func():
+			close_inventory()
+			select_item(item), inventory_grid)
+		button.add_theme_font_size_override("font_size", 11)
+		button.custom_minimum_size = Vector2(250, 35)
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		button.tooltip_text = item_name(item)
+		button.modulate = Color("ffd591") if selected == item else Color.WHITE
+		inventory_grid_buttons[item] = button
+	if inventory_grid_buttons.is_empty():
+		_label("Pocket lint. It has no known cosmic powers.", Vector2.ZERO, Vector2(508, 40), 12, inventory_grid)
+	pending_interaction.clear()
+	destination = player
+	audio.update_footsteps(0.0, false)
+	hovered = ""
+	inventory_shade.show()
+	queue_redraw()
+
+func close_inventory() -> void:
+	if is_instance_valid(inventory_shade):
+		inventory_shade.hide()
+	queue_redraw()
+
+func _build_death_panel() -> void:
+	death_shade = ColorRect.new()
+	death_shade.size = Vector2(640, 400)
+	death_shade.color = Color(0.035, 0.01, 0.02, 0.80)
+	death_shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	hud.add_child(death_shade)
+	death_panel = Panel.new()
+	death_panel.position = Vector2(62, 87)
+	death_panel.size = Vector2(516, 232)
+	death_panel.add_theme_stylebox_override("panel", _panel_style(Color("261d2b"), Color("d79472"), 9))
+	death_shade.add_child(death_panel)
+	_label("ANOTHER FINE MESS, ROGER", Vector2(22, 17), Vector2(470, 25), 18, death_panel)
+	death_text = _label("", Vector2(22, 56), Vector2(470, 110), 13, death_panel)
+	death_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_label("Retry keeps your items and puzzle progress.", Vector2(22, 192), Vector2(329, 23), 10, death_panel)
+	death_retry_button = _button("Retry", Vector2(388, 185), Vector2(106, 30), retry_death, death_panel)
+	death_shade.hide()
+
+func death_is_open() -> bool:
+	return is_instance_valid(death_shade) and death_shade.visible
+
+func show_death(reason: String) -> void:
+	close_dialogue()
+	close_inventory()
+	_cancel_travel()
+	death_return_position = player
+	pending_interaction.clear()
+	destination = player
+	hovered = ""
+	audio.update_footsteps(0.0, false)
+	audio.play_sfx("blocked")
+	death_text.text = reason
+	death_shade.show()
+	queue_redraw()
+
+func retry_death() -> void:
+	if not death_is_open():
+		return
+	death_shade.hide()
+	player = death_return_position
+	destination = player
+	pending_interaction.clear()
+	say("Roger gets another chance. Your inventory and puzzle progress are intact.")
+	queue_redraw()
+
+func finish_campaign(lines: Array) -> void:
+	close_dialogue()
+	close_inventory()
+	_cancel_travel()
+	state["flags"]["complete"] = true
+	state["ending_lines"] = lines.duplicate()
+	audio.play_sfx("complete")
+	_restore_ending_text()
+	finale_panel.show()
+	say("Mopocalypse averted. Six relics recovered. Final score " + str(state["score"]) + "/300.")
+	update_hud()
+
+func _restore_ending_text() -> void:
+	var lines = state.get("ending_lines", CAMPAIGN_ENDING)
+	if not lines is Array or lines.is_empty():
+		lines = CAMPAIGN_ENDING
+	finale_text.text = "\n\n".join(PackedStringArray(lines))
+	finale_text.size = Vector2(456, 144)
+
 func burger_is_open() -> bool:
 	return is_instance_valid(burger_panel) and burger_panel.visible
 
 func open_burger_shift() -> void:
-	if title_is_open() or sound_is_open() or travel_is_open() or flight_is_active() or flag("complete"):
+	if title_is_open() or sound_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open() or flag("complete"):
 		return
 	if state.get("room", "") != "monolith":
 		say("The relief shift is at Monolith Burger. Board the dock shuttle and choose its local route.")
@@ -303,7 +475,8 @@ func flight_is_active() -> bool:
 	return is_instance_valid(travel) and travel.flight_is_active()
 
 func open_travel_menu() -> void:
-	if state.get("room", "") not in ["dock", "monolith"] or title_is_open() or sound_is_open() or burger_is_open() or flight_is_active() or flag("complete"):
+	var routes: Array = Campaign.navigation_routes(self, state.get("room", ""))
+	if routes.is_empty() or title_is_open() or sound_is_open() or burger_is_open() or flight_is_active() or inventory_is_open() or death_is_open() or flag("complete"):
 		return
 	close_dialogue()
 	pending_interaction.clear()
@@ -323,12 +496,14 @@ func close_travel_menu() -> void:
 	queue_redraw()
 
 func choose_destination(id: String) -> bool:
-	if not travel_is_open() or sound_is_open() or flight_is_active():
+	if not travel_is_open() or sound_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return false
-	var room: String = state["room"]
-	if (room == "dock" and id not in ["monolith", "labion"]) or (room == "monolith" and id != "dock"):
-		return false
-	if id == "labion" and not flag("coordinates_set"):
+	var available := false
+	for route in Campaign.navigation_routes(self, state["room"]):
+		if route["id"] == id and route.get("enabled", false):
+			available = true
+	var target: String = Campaign.destination_room(self, id)
+	if not available or not ROOM_NAMES.has(target) or target == state["room"]:
 		audio.play_sfx("blocked")
 		return false
 	flight_destination = id
@@ -339,7 +514,7 @@ func choose_destination(id: String) -> bool:
 	audio.update_footsteps(0.0, false)
 	audio.play_sfx("terminal")
 	travel.begin_flight(id)
-	say("Course set: " + ("Labion" if id == "labion" else str(ROOM_NAMES[id])) + ". Please keep all existential crises inside the shuttle.")
+	say("Course set: " + str(ROOM_NAMES[target]) + ". Please keep all existential crises inside the shuttle.")
 	update_hud()
 	return true
 
@@ -347,21 +522,18 @@ func finish_flight() -> void:
 	if not flight_is_active():
 		return
 	var arrival := flight_destination
+	var room: String = Campaign.destination_room(self, arrival)
 	_cancel_travel()
-	if arrival == "labion":
-		award("complete", 10)
-		dialogue_lines.clear()
-		dialogue_panel.hide()
-		finale_panel.show()
-		say("Course set for Labion. Chapter complete — 100/100.")
-		update_hud()
-	elif arrival in ["monolith", "dock"]:
-		var trips: Dictionary = state.get("travel", {}) if state.get("travel", {}) is Dictionary else {}
-		trips["trips"] = int(trips.get("trips", 0)) + 1
-		if arrival == "monolith":
-			trips["visited_monolith"] = true
-		state["travel"] = trips
-		enter_room(arrival, Vector2(568, 279) if arrival == "monolith" else Vector2(329, 278))
+	if not ROOM_NAMES.has(room):
+		return
+	if arrival == "labion" and not flag("chapter_one_complete"):
+		award("chapter_one_complete", 10)
+	var trips: Dictionary = state.get("travel", {}) if state.get("travel", {}) is Dictionary else {}
+	trips["trips"] = int(trips.get("trips", 0)) + 1
+	if arrival == "monolith":
+		trips["visited_monolith"] = true
+	state["travel"] = trips
+	enter_room(room, Vector2(568, 279) if arrival == "monolith" else Vector2(173, 280))
 
 func _cancel_travel() -> void:
 	if is_instance_valid(travel):
@@ -432,7 +604,7 @@ func _build_title_panel() -> void:
 	_label("A POINT & CLICK SPACE ADVENTURE", Vector2(44, 49), Vector2(552, 21), 11, title_panel).add_theme_color_override("font_color", Color("b1c7d5"))
 	_label("SPACE QUEST VII", Vector2(40, 91), Vector2(556, 64), 44, title_panel).add_theme_color_override("font_color", Color("f4d49a"))
 	_label("Mopocalypse Now", Vector2(44, 151), Vector2(552, 42), 28, title_panel)
-	_label("CHAPTER ONE: THE MOP JOB", Vector2(46, 207), Vector2(550, 24), 13, title_panel).add_theme_color_override("font_color", Color("e7bb7c"))
+	_label("30 SCREENS · SIX RELICS · ONE VERY BAD CLONE", Vector2(46, 207), Vector2(550, 24), 13, title_panel).add_theme_color_override("font_color", Color("e7bb7c"))
 	title_new_button = _button("New Game", Vector2(44, 276), Vector2(174, 39), func(): start_adventure(), title_panel)
 	title_continue_button = _button("Continue", Vector2(230, 276), Vector2(174, 39), func(): start_adventure(true), title_panel)
 	title_sound_button = _button("Sound", Vector2(416, 276), Vector2(136, 39), toggle_sound_panel, title_panel)
@@ -466,6 +638,8 @@ func checkpoint_available() -> bool:
 
 func show_title() -> void:
 	_cancel_travel()
+	close_inventory()
+	death_shade.hide()
 	title_continue_button.disabled = not checkpoint_available()
 	title_continue_button.tooltip_text = "Resume your checkpoint" if not title_continue_button.disabled else "Save a checkpoint during play to enable Continue"
 	title_status.text = "Enter or Esc starts a new game • Music is skippable"
@@ -548,7 +722,7 @@ func sound_is_open() -> bool:
 	return is_instance_valid(sound_panel) and sound_panel.visible
 
 func toggle_sound_panel() -> void:
-	if flight_is_active():
+	if flight_is_active() or death_is_open() or inventory_is_open():
 		return
 	if sound_is_open():
 		close_sound_panel()
@@ -568,6 +742,15 @@ func close_sound_panel() -> void:
 	queue_redraw()
 
 func _input(event: InputEvent) -> void:
+	if death_is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
+			retry_death()
+			get_viewport().set_input_as_handled()
+		return
+	if inventory_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ESCAPE, KEY_I]:
+		close_inventory()
+		get_viewport().set_input_as_handled()
+		return
 	if flight_is_active():
 		if (event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]) or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 			finish_flight()
@@ -590,10 +773,13 @@ func _input(event: InputEvent) -> void:
 func new_game(show_intro: bool = true) -> void:
 	close_sound_panel()
 	close_burger_shift()
+	close_inventory()
+	death_shade.hide()
 	_cancel_travel()
 	_hide_title()
 	intro_dialogue_active = false
-	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
+	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0, "visited_rooms": ["diner"]}
+	_record_room_visit("diner")
 	player = Vector2(173, 280)
 	destination = player
 	pending_interaction.clear()
@@ -645,7 +831,7 @@ func remove_item(item: String) -> void:
 		selected = ""
 
 func set_verb(action: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return
 	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
@@ -678,6 +864,17 @@ func _advance_dialog() -> void:
 	dialogue_text.text = line
 	speaker_label.text = {"roger": "ROGER — SANITATION / RELUCTANT HERO", "cook": "BEX — HEAD COOK / OIL BARON", "guard": "VOSS — DOCK INSPECTOR", "guardian": "ARCHIVE GUARDIAN / MAINTENANCE AI", "clone": "R0-GER — RECORDED MESSAGE", "manager": "FLIPP — MONOLITH BURGER SHIFT MANAGER"}.get(dialogue_speaker, "TRANSMISSION")
 	portrait.texture = textures.get("portrait_" + ("guard" if dialogue_speaker == "guardian" else dialogue_speaker), null)
+	if dialogue_speaker == "campaign_npc":
+		var data: Dictionary = room_hotspots().get("npc", {})
+		speaker_label.text = str(data.get("name", "LOCAL RESIDENT")).to_upper()
+		var room: String = state["room"]
+		if textures.has("room_" + room) and data.has("rect"):
+			var atlas := AtlasTexture.new()
+			var texture: Texture2D = textures["room_" + room]
+			var target: Rect2 = data["rect"]
+			atlas.atlas = texture
+			atlas.region = Rect2(target.position.x / 640.0 * texture.get_width(), (target.position.y - 26.0) / 292.0 * texture.get_height(), target.size.x / 640.0 * texture.get_width(), target.size.y / 292.0 * texture.get_height())
+			portrait.texture = atlas
 	dialogue_panel.show()
 	say(line)
 
@@ -694,8 +891,12 @@ func _finish_intro_dialogue() -> void:
 func update_hud() -> void:
 	if not is_instance_valid(room_label):
 		return
-	room_label.text = "THE MOP JOB   /   " + str(ROOM_NAMES.get(state.get("room", "diner"), ""))
-	score_label.text = "SCORE " + str(state.get("score", 0)) + "/100"
+	var room: String = state.get("room", "diner")
+	room_label.text = "%02d/30 · %s" % [ROOM_NAMES.keys().find(room) + 1, str(ROOM_NAMES.get(room, ""))]
+	room_label.clip_text = true
+	room_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	room_label.tooltip_text = str(ROOM_NAMES.get(room, "")) + " · " + str(state.get("visited_rooms", []).size()) + "/30 locations visited"
+	score_label.text = "SCORE " + str(state.get("score", 0)) + "/300"
 	for button in verb_buttons:
 		button.modulate = Color("ffd591") if button.text == verb else Color.WHITE
 	for child in inventory_container.get_children():
@@ -713,17 +914,17 @@ func update_hud() -> void:
 	else:
 		for item_value in items:
 			var item := str(item_value)
-			var button := _button(str(ITEM_SHORT.get(item, item)), Vector2.ZERO, Vector2.ZERO, func(): select_item(item), inventory_container)
+			var button := _button(item_short(item), Vector2.ZERO, Vector2.ZERO, func(): select_item(item), inventory_container)
 			button.add_theme_font_size_override("font_size", 9)
 			button.custom_minimum_size = Vector2(44 if items.size() > 5 else 48, 27)
-			button.tooltip_text = str(INVENTORY_NAMES.get(item, item)) + " — click to use; click another item to combine."
+			button.tooltip_text = item_name(item) + " — click to use; click another item to combine."
 			button.modulate = Color("ffd591") if item == selected else Color.WHITE
 			item_buttons.append(button)
 			inventory_buttons[item] = button
 	queue_redraw()
 
 func select_item(item: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or not has_item(item):
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open() or not has_item(item):
 		return
 	if selected == item:
 		reset_interaction()
@@ -734,7 +935,7 @@ func select_item(item: String) -> void:
 			return
 	selected = item
 	verb = "Interact"
-	say("Using " + str(INVENTORY_NAMES.get(item, item)) + ". Click a room object or another pocket item.")
+	say("Using " + item_name(item) + ". Click a room object or another pocket item.")
 	update_hud()
 
 func combine_items(first: String, second: String) -> bool:
@@ -757,13 +958,13 @@ func combine_items(first: String, second: String) -> bool:
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	if not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active():
+	if not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not inventory_is_open() and not death_is_open():
 		for index in range(bit_effects.size() - 1, -1, -1):
 			bit_effects[index]["remaining"] -= delta
 			if bit_effects[index]["remaining"] <= 0.0:
 				bit_effects.remove_at(index)
 	var moving := player.distance_to(destination) > 1.0
-	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not flag("complete")
+	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not inventory_is_open() and not death_is_open() and not flag("complete")
 	if walking:
 		var old_position := player
 		facing_right = destination.x >= player.x
@@ -776,12 +977,12 @@ func _process(delta: float) -> void:
 	else:
 		audio.update_footsteps(0.0, false)
 	var mouse := get_global_mouse_position()
-	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() else ""
+	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not inventory_is_open() and not death_is_open() else ""
 	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if sound_is_open() or flight_is_active():
+	if sound_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return
 	if travel_is_open():
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
@@ -810,7 +1011,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_H:
 			give_hint()
 		elif event.keycode == KEY_I:
-			say("Your pockets are at bottom right. Click an item, then a room object; click two items to combine them.")
+			open_inventory()
 		elif event.keycode == KEY_M:
 			audio.play_sfx("ui_click")
 			toggle_sound_panel()
@@ -830,6 +1031,7 @@ func room_hotspots(room: String = "") -> Dictionary:
 		room = state.get("room", "diner")
 	var objects: Dictionary = HOTSPOTS.get(room, {}).duplicate()
 	objects.merge(RoomBits.HOTSPOTS.get(room, {}))
+	objects.merge(Campaign.HOTSPOTS.get(room, {}), true)
 	return objects
 
 func start_bit_effect(id: String) -> void:
@@ -847,7 +1049,7 @@ func object_visible(id: String) -> bool:
 		return false
 	if id == "mop" and flag("mop_taken"):
 		return false
-	return RoomBits.visible(self, id)
+	return Campaign.visible(self, state.get("room", ""), id) and RoomBits.visible(self, id)
 
 func hotspot_at(point: Vector2) -> String:
 	var room: String = state.get("room", "diner")
@@ -867,7 +1069,7 @@ func hotspot_at(point: Vector2) -> String:
 	return best
 
 func route_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -883,7 +1085,7 @@ func route_click(point: Vector2) -> void:
 	queue_world_action(id, action, selected)
 
 func route_right_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -904,6 +1106,8 @@ func reset_interaction() -> void:
 	update_hud()
 
 func default_action(id: String) -> String:
+	if Campaign.HOTSPOTS.get(state.get("room", ""), {}).has(id):
+		return Campaign.default_action(state["room"], id)
 	if id.begins_with("bit_"):
 		return RoomBits.default_action(id)
 	if id in ["news", "kiosk"]:
@@ -913,7 +1117,7 @@ func default_action(id: String) -> String:
 	return "Use"
 
 func is_character(id: String) -> bool:
-	return id in ["cook", "guard", "guardian", "manager"]
+	return id in ["cook", "guard", "guardian", "manager"] or Campaign.is_character(state.get("room", ""), id)
 
 func action_for(id: String) -> String:
 	var action := default_action(id) if verb == "Interact" else verb
@@ -921,12 +1125,14 @@ func action_for(id: String) -> String:
 
 func contextual_action_label(id: String) -> String:
 	if selected != "":
-		return "Use " + str(INVENTORY_NAMES.get(selected, selected)) + " on"
+		return "Use " + item_name(selected) + " on"
 	var action := action_for(id)
 	if action == "Look":
 		return "Inspect"
 	if action == "Talk":
 		return "Talk to"
+	if Campaign.HOTSPOTS.get(state.get("room", ""), {}).has(id):
+		return str(room_hotspots()[id].get("use_label", "Interact with"))
 	if id in ["counter", "shift_counter"]:
 		return "Interact with"
 	if id.begins_with("bit_"):
@@ -956,7 +1162,7 @@ func interact(id: String) -> void:
 	perform_action(id, "Use" if selected != "" else action_for(id), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
-	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return
 	if item == "" and action in ["Use", "Interact"]:
 		item = selected
@@ -977,6 +1183,10 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 		else:
 			show_dialog("cook", ["That's a Monolith Burger meal coupon. My till only accepts credits, apologies and plausible excuses. Take the dock shuttle to their space restaurant; Flipp will redeem it there."])
 		update_hud()
+		return
+	if Campaign.handle(self, room, id, action, item):
+		update_hud()
+		queue_redraw()
 		return
 	if action != "Walk" and RoomBits.handle(self, room, id, action, item):
 		update_hud()
@@ -1143,7 +1353,7 @@ func use_object(id: String, item: String) -> void:
 					if item == "":
 						open_burger_shift()
 					else:
-						show_dialog("manager", ["The order terminal needs a willing employee, not " + str(INVENTORY_NAMES.get(item, item)) + ". Click your selected pocket item again, then tap the screen."])
+						show_dialog("manager", ["The order terminal needs a willing employee, not " + item_name(item) + ". Click your selected pocket item again, then tap the screen."])
 		"museum":
 			match id:
 				"exit":
@@ -1188,10 +1398,18 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	if not ROOM_NAMES.has(room):
 		return
 	close_burger_shift()
+	close_inventory()
+	death_shade.hide()
 	_cancel_travel()
 	if state.get("room", "") != room:
 		audio.play_sfx("door")
 	state["room"] = room
+	_load_room_texture(room)
+	if not state.get("visited_rooms", null) is Array:
+		state["visited_rooms"] = []
+	if not state["visited_rooms"].has(room):
+		state["visited_rooms"].append(room)
+	_record_room_visit(room)
 	audio.set_room(room)
 	intro_dialogue_active = false
 	player = position_value
@@ -1205,8 +1423,19 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	say(ROOM_INTROS[room])
 	update_hud()
 
+func _record_room_visit(room: String) -> void:
+	if not state.get("campaign", null) is Dictionary:
+		state["campaign"] = {}
+	if not state["campaign"].get("visited", null) is Dictionary:
+		state["campaign"]["visited"] = {}
+	state["campaign"]["visited"][room] = true
+
 func give_hint() -> void:
-	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
+		return
+	var campaign_hint := Campaign.hint(self)
+	if campaign_hint != "":
+		show_dialog("roger", [campaign_hint])
 		return
 	if state.get("room", "") == "monolith":
 		var shift: Dictionary = BurgerShift.status(self)
@@ -1245,7 +1474,7 @@ func give_hint() -> void:
 	show_dialog("roger", [hint])
 
 func save_game() -> bool:
-	if travel_is_open() or flight_is_active():
+	if travel_is_open() or flight_is_active() or inventory_is_open() or death_is_open():
 		return false
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file == null:
@@ -1287,10 +1516,22 @@ func load_game() -> bool:
 		return false
 	state = snapshot
 	close_burger_shift()
+	close_inventory()
+	death_shade.hide()
 	_cancel_travel()
 	bit_effects.clear()
 	state.erase("player")
 	state["score"] = int(state.get("score", 0))
+	# The previous release ended at the Labion launch. Its completed checkpoint
+	# now continues into the campaign, with its earned 100 points intact.
+	if flag("complete") and state["score"] <= 100 and not flag("campaign_finale_complete"):
+		state["flags"].erase("complete")
+		state["flags"]["chapter_one_complete"] = true
+		state["flags"]["coordinates_set"] = true
+	if not state.get("visited_rooms", null) is Array:
+		state["visited_rooms"] = [state["room"]]
+	_record_room_visit(state["room"])
+	_load_room_texture(state["room"])
 	# Earlier checkpoints granted the mop when the locker opened. Preserve that
 	# pickup when loading, including saves made after the mop was charged/used.
 	if has_item("mop") or has_item("charged mop") or flag("mop_charged") or flag("floor_clean"):
@@ -1303,6 +1544,8 @@ func load_game() -> bool:
 	dialogue_lines.clear()
 	dialogue_panel.hide()
 	finale_panel.visible = flag("complete")
+	if flag("complete"):
+		_restore_ending_text()
 	audio.set_room(state["room"])
 	intro_dialogue_active = false
 	audio.update_footsteps(0.0, false)
@@ -1346,7 +1589,7 @@ func _draw() -> void:
 
 func _draw_fallback_room(room: String) -> void:
 	var colors := {"diner": Color("654054"), "dock": Color("24414d"), "museum": Color("39394e"), "monolith": Color("715032")}
-	draw_rect(Rect2(0, 26, 640, 292), colors[room])
+	draw_rect(Rect2(0, 26, 640, 292), colors.get(room, Color("24394c")))
 	for i in range(9):
 		draw_line(Vector2(i * 80, 26), Vector2(i * 80, 318), Color(0.1, 0.14, 0.2, 0.3), 2)
 	draw_rect(Rect2(0, 249, 640, 69), Color("343d4a"))
@@ -1398,7 +1641,7 @@ func draw_ellipse(rect: Rect2, color: Color) -> void:
 	draw_colored_polygon(points, color)
 
 func _draw_player() -> void:
-	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not flag("complete")
+	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not inventory_is_open() and not death_is_open() and not flag("complete")
 	var bob := sin(elapsed * 11) * 1.2 if moving else sin(elapsed * 1.7) * 0.3
 	var perspective_height := lerpf(105.0, 140.0, clampf((player.y - 257.0) / 49.0, 0.0, 1.0))
 	draw_ellipse(Rect2(player.x - 22, player.y - 4, 45, 10), Color(0.01, 0.015, 0.025, 0.45))

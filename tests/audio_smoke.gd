@@ -57,9 +57,10 @@ func mixed_energy(seconds := 0.35) -> float:
 			energy += frame.length_squared()
 	return energy
 
-func loop_channels_playing(room_id: String) -> void:
-	expect(game.audio.music_player.playing and game.audio.music_player.stream.data == game.audio.streams["music_" + room_id].data, room_id + " uses its own playing music stream")
-	expect(game.audio.ambience_player.playing and game.audio.ambience_player.stream.data == game.audio.streams["ambience_" + room_id].data, room_id + " uses its own playing ambience stream")
+func loop_channels_playing(room_id: String, theme := "") -> void:
+	var score_id := room_id if theme.is_empty() else theme
+	expect(game.audio.music_player.playing and game.audio.music_player.stream.data == game.audio.streams["music_" + score_id].data, room_id + " uses its assigned playing music stream")
+	expect(game.audio.ambience_player.playing and game.audio.ambience_player.stream.data == game.audio.streams["ambience_" + score_id].data, room_id + " uses its assigned playing ambience stream")
 	expect(game.audio.music_player.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD and game.audio.music_player.stream.loop_end > 0, room_id + " music player loops its whole WAV")
 	expect(game.audio.ambience_player.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD and game.audio.ambience_player.stream.loop_end > 0, room_id + " ambience player loops its whole WAV")
 	var loop_players := 0
@@ -69,8 +70,8 @@ func loop_channels_playing(room_id: String) -> void:
 	expect(loop_players == 2, room_id + " has exactly one music and one ambience player without overlapping old room loops")
 
 func check_assets() -> void:
-	var expected_assets := 21 + int(game.audio.streams.has("intro_theme")) + int(game.audio.streams.has("intro_fanfare"))
-	expect(game.audio.streams.size() == expected_assets, "All eight room loops and thirteen original effects load, plus supplied title cues")
+	var expected_assets := 33 + int(game.audio.streams.has("intro_theme")) + int(game.audio.streams.has("intro_fanfare"))
+	expect(game.audio.streams.size() == expected_assets, "All twenty regional loops and thirteen original effects load, plus supplied title cues")
 	for stream_name in game.audio.streams:
 		var stream = game.audio.streams[stream_name]
 		if stream is AudioStreamOggVorbis:
@@ -99,6 +100,23 @@ func check_assets() -> void:
 			expect(stream.get_length() >= 8.0, str(stream_name) + " provides a full room loop rather than a short effect")
 		else:
 			expect(stream.loop_mode == AudioStreamWAV.LOOP_DISABLED, str(stream_name) + " plays as a one-shot effect")
+
+func check_campaign_scores() -> void:
+	var regional_rooms := {"labion_dock": "labion", "plexi_gallery": "plexi", "starcon_class": "starcon", "polysorbate_market": "polysorbate", "glitzon_vault": "glitzon", "clone_chamber": "finale"}
+	var previous_music: PackedByteArray = game.audio.music_player.stream.data
+	for room_id in regional_rooms:
+		game.enter_room(room_id)
+		loop_channels_playing(room_id, regional_rooms[room_id])
+		expect(game.audio.current_room == room_id, "Audio remembers the actual campaign location rather than replacing it with the score theme")
+		expect(game.audio.music_player.stream.data != previous_music, "Each new story region replaces the preceding region's music with a distinct score")
+		previous_music = game.audio.music_player.stream.data
+		var starts := int(game.audio.room_start_counts.get(room_id, 0))
+		game.audio.set_room(room_id)
+		expect(int(game.audio.room_start_counts.get(room_id, 0)) == starts, "Same-room campaign audio requests cannot restart or stack the region's loops")
+	expect(await mixed_energy() > 0.000001, "The final campaign region produces actual nonzero PCM through Godot's mixer")
+	for room_id in ["monolith_berth", "monolith_kitchen", "monolith_freezer", "monolith_arcade"]:
+		game.enter_room(room_id)
+		loop_channels_playing(room_id, "monolith")
 
 func check_movement() -> void:
 	game.new_game(false)
@@ -186,15 +204,15 @@ func check_puzzle_events() -> void:
 	act("shuttle")
 	game.choose_destination("labion")
 	game.finish_flight()
-	expect(game.flag("complete") and count_event("complete") == completion + 1, "Completing the actual chapter plays one ending cue")
+	expect(game.flag("chapter_one_complete") and not game.flag("complete") and game.state["room"] == "labion_dock" and count_event("complete") == completion, "The opening flight reaches playable Labion without playing the full-campaign ending cue")
 	act("shuttle")
-	expect(count_event("complete") == completion + 1, "Completed chapter cannot replay the ending cue")
+	expect(count_event("complete") == completion, "A repeated old shuttle target cannot play a campaign ending cue")
 	var saves := count_event("save")
 	var loads := count_event("load")
 	expect(game.save_game() and count_event("save") == saves + 1, "Successful checkpoint saving plays its confirmation cue")
 	game.new_game(false)
 	expect(game.load_game() and count_event("load") == loads + 1, "Successful checkpoint loading plays its confirmation cue")
-	expect(count_event("complete") == completion + 1, "Restoring a completed save does not replay the ending cue")
+	expect(count_event("complete") == completion and game.flag("chapter_one_complete") and not game.finale_panel.visible, "Restoring an opening-complete save keeps the campaign playable without an ending cue")
 
 func check_settings() -> void:
 	game.audio.set_volumes(0.42, 0.31, 0.17)
@@ -485,6 +503,7 @@ func check() -> void:
 	var room_starts := int(game.audio.room_start_counts.get("museum", 0))
 	game.audio.set_room("museum")
 	expect(int(game.audio.room_start_counts.get("museum", 0)) == room_starts, "Reapplying the same room does not restart its music or ambience")
+	await check_campaign_scores()
 	check_movement()
 	check_puzzle_events()
 	await check_settings()

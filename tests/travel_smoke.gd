@@ -20,6 +20,9 @@ func progress() -> Dictionary:
 	var saved: Dictionary = game.state.duplicate(true)
 	saved.erase("room")
 	saved.erase("travel")
+	saved.erase("visited_rooms")
+	if saved.get("campaign", null) is Dictionary:
+		saved["campaign"].erase("visited")
 	# JSON checkpoints represent numeric optional counters as floats.
 	return JSON.parse_string(JSON.stringify(saved))
 
@@ -129,10 +132,13 @@ func check_actual_trip() -> void:
 	game.destination = game.player
 	await click_hotspot("exit")
 	finish_walk()
+	expect(game.state["room"] == "monolith_berth" and not game.travel_is_open(), "The restaurant doorway enters its separate playable shuttle berth")
+	await click_hotspot("right")
+	finish_walk()
 	expect(game.travel_is_open() and game.travel.destination_buttons["dock"].visible and not game.travel.destination_buttons["monolith"].visible, "The restaurant berth offers a real return flight rather than a direct room shortcut")
-	expect(not game.travel.destination_buttons["labion"].visible and not game.choose_destination("labion"), "The restaurant only offers its local return route")
+	expect(game.travel.destination_buttons["labion"].visible and game.travel.destination_buttons["labion"].disabled and not game.choose_destination("labion"), "The berth displays Labion with the same unmet coordinate gate as the service dock")
 	await click_control(game.travel.destination_buttons["dock"])
-	expect(game.flight_is_active() and game.state["room"] == "monolith", "Return selection starts flight while Roger remains at the restaurant")
+	expect(game.flight_is_active() and game.state["room"] == "monolith_berth", "Return selection starts flight while Roger remains in the restaurant's service berth")
 	game.travel._process(game.travel.FLIGHT_DURATION + 0.1)
 	expect(game.state["room"] == "dock" and not game.flight_is_active(), "Normal flight timing automatically returns Roger to the service dock")
 	expect(progress() == before and game.state.get("travel", {}).get("trips", 0) == 2, "Round trip preserves inventory and puzzle state while counting two completed flights")
@@ -269,11 +275,11 @@ func check_optional_job_and_mission() -> void:
 	expect(game.choose_destination("labion") and game.flight_is_active() and not game.flag("complete"), "Labion departure shows the actual flight before completing the chapter")
 	expect(game.textures.has("flight_labion"), "The main destination has its own imported Labion flight illustration")
 	await press_key(KEY_ENTER)
-	expect(game.flag("complete") and game.state["score"] == 100 and game.finale_panel.visible, "Labion arrival preserves the original 100-point chapter ending")
+	expect(game.flag("chapter_one_complete") and not game.flag("complete") and game.state["score"] == 100 and game.state["room"] == "labion_dock" and not game.finale_panel.visible, "Labion arrival preserves the original 100-point opening and continues into its playable planet")
 	expect(shift.status(game)["completed"] and shift.status(game)["coupon_redeemed"], "Main completion retains the optional restaurant's reward history")
 	game.finish_flight()
 	game.open_travel_menu()
-	expect(game.state["score"] == 100 and not game.travel_is_open(), "Completed chapter cannot relaunch travel or duplicate ending points")
+	expect(game.state["score"] == 100 and game.travel_is_open() and not game.flag("complete"), "The completed opening retains return travel without duplicating points or ending the campaign")
 	completed_cases["mission"] = true
 
 func check() -> void:
@@ -296,7 +302,7 @@ func check() -> void:
 	game.queue_free()
 	await create_timer(0.15).timeout
 	if failures == 0:
-		print("PASS: %d travel checks — real route clicks, outbound/return flights, fourth room, locked Labion, modal input, restaurant job, preserved story, checkpoints/legacy saves, original ending" % checks)
+		print("PASS: %d travel checks — real route clicks, outbound/return flights, fourth room, locked Labion, modal input, restaurant job, preserved story, checkpoints/legacy saves, opening continuation" % checks)
 	else:
 		push_error("%d of %d travel checks failed" % [failures, checks])
 	quit(0 if failures == 0 else 1)

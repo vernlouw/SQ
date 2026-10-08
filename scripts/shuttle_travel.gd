@@ -6,7 +6,12 @@ const FLIGHT_DURATION := 2.6
 const DESTINATION_NAMES := {
 	"monolith": "MONOLITH BURGER",
 	"dock": "SERVICE DOCK 7",
-	"labion": "LABION"
+	"labion": "LABION",
+	"plexi": "PLEXI-PRIME",
+	"starcon": "STARCON ACADEMY",
+	"polysorbate": "POLYSORBATE LX",
+	"glitzon": "GLITZON",
+	"finale": "R0-GER COMMAND SHIP"
 }
 
 var game
@@ -16,6 +21,8 @@ var menu_panel: Panel
 var menu_shade: ColorRect
 var route_label: Label
 var explanation_label: Label
+var route_scroll: ScrollContainer
+var route_list: VBoxContainer
 var flight_labels: Control
 var flight_heading: Label
 var flight_route: Label
@@ -26,6 +33,7 @@ var _flight_active := false
 var _flight_elapsed := 0.0
 var _flight_destination := ""
 var _departure := ""
+var _departure_room := ""
 var _arrival_sent := false
 
 func setup(owner_game) -> void:
@@ -61,7 +69,7 @@ func _label(value: String, at: Vector2, dimensions: Vector2, font_size: int, par
 	parent.add_child(label)
 	return label
 
-func _button(value: String, at: Vector2, dimensions: Vector2, callback: Callable) -> Button:
+func _button(value: String, at: Vector2, dimensions: Vector2, callback: Callable, parent: Control = null) -> Button:
 	var button := Button.new()
 	button.text = value
 	button.position = at
@@ -79,7 +87,7 @@ func _button(value: String, at: Vector2, dimensions: Vector2, callback: Callable
 			return
 		game.audio.play_sfx("ui_click")
 		callback.call())
-	menu_panel.add_child(button)
+	(menu_panel if parent == null else parent).add_child(button)
 	button.size = dimensions
 	return button
 
@@ -90,19 +98,40 @@ func _build_menu() -> void:
 	menu_shade.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(menu_shade)
 	menu_panel = Panel.new()
-	menu_panel.position = Vector2(62, 66)
-	menu_panel.size = Vector2(516, 270)
+	menu_panel.position = Vector2(48, 31)
+	menu_panel.size = Vector2(544, 338)
 	menu_panel.add_theme_stylebox_override("panel", _style(Color("0c1c29"), Color("caa86b"), 10))
 	add_child(menu_panel)
-	_label("SHUTTLE NAVIGATION", Vector2(23, 17), Vector2(466, 27), 20, menu_panel).add_theme_color_override("font_color", Color("f5d49a"))
-	route_label = _label("", Vector2(24, 50), Vector2(468, 21), 11, menu_panel)
+	_label("SHUTTLE NAVIGATION", Vector2(23, 16), Vector2(496, 27), 20, menu_panel).add_theme_color_override("font_color", Color("f5d49a"))
+	route_label = _label("", Vector2(24, 48), Vector2(496, 21), 11, menu_panel)
 	route_label.add_theme_color_override("font_color", Color("94b7ca"))
-	destination_buttons["monolith"] = _button("Fly to Monolith Burger", Vector2(24, 87), Vector2(468, 43), func(): game.choose_destination("monolith"))
-	destination_buttons["dock"] = _button("Return to Service Dock 7", Vector2(24, 87), Vector2(468, 43), func(): game.choose_destination("dock"))
-	destination_buttons["labion"] = _button("Set course for Labion", Vector2(24, 139), Vector2(468, 43), func(): game.choose_destination("labion"))
-	explanation_label = _label("", Vector2(24, 191), Vector2(347, 57), 11, menu_panel)
+	route_label.clip_text = true
+	route_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	route_scroll = ScrollContainer.new()
+	route_scroll.name = "DestinationRoutes"
+	route_scroll.position = Vector2(24, 77)
+	route_scroll.size = Vector2(496, 169)
+	route_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	route_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	route_scroll.add_theme_stylebox_override("panel", _style(Color("091520"), Color("294251"), 5))
+	menu_panel.add_child(route_scroll)
+	route_list = VBoxContainer.new()
+	route_list.name = "RouteList"
+	route_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	route_list.add_theme_constant_override("separation", 5)
+	route_scroll.add_child(route_list)
+	for destination_id in DESTINATION_NAMES:
+		var id: String = destination_id
+		var button := _button(str(DESTINATION_NAMES[id]), Vector2.ZERO, Vector2(474, 36), func(): game.choose_destination(id), route_list)
+		button.custom_minimum_size = Vector2(0, 36)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.mouse_entered.connect(func(): _describe_route(id))
+		destination_buttons[id] = button
+	explanation_label = _label("", Vector2(24, 257), Vector2(365, 58), 11, menu_panel)
 	explanation_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	close_button = _button("Cancel", Vector2(389, 224), Vector2(103, 29), func(): game.close_travel_menu())
+	explanation_label.clip_text = true
+	close_button = _button("Cancel", Vector2(408, 298), Vector2(112, 29), func(): game.close_travel_menu())
 	close_button.tooltip_text = "Return to the room — Esc"
 
 func _build_flight_labels() -> void:
@@ -121,27 +150,46 @@ func _build_flight_labels() -> void:
 	flight_progress.add_theme_color_override("font_color", Color("abc0cc"))
 	flight_progress.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 
-func open_menu(room: String, labion_available: bool) -> void:
-	if _flight_active or room not in ["dock", "monolith"]:
+func open_menu(room: String, _labion_available: bool) -> void:
+	if _flight_active:
+		return
+	var routes: Array = game.Campaign.navigation_routes(game, room)
+	if routes.is_empty():
 		return
 	_menu_open = true
 	menu_shade.show()
 	menu_panel.show()
 	flight_labels.hide()
-	destination_buttons["monolith"].visible = room == "dock"
-	destination_buttons["dock"].visible = room == "monolith"
-	destination_buttons["labion"].visible = room == "dock"
-	destination_buttons["labion"].disabled = not labion_available
-	destination_buttons["labion"].tooltip_text = "The museum archive holds Labion's coordinates." if not labion_available else "Launch the story mission and complete this chapter."
-	route_label.text = "DEPARTURE: SERVICE DOCK 7  /  CHOOSE A DESTINATION" if room == "dock" else "DEPARTURE: MONOLITH BURGER  /  LOCAL RETURN ROUTE"
-	if room == "monolith":
-		explanation_label.text = "Your shuttle is parked outside. Return to the dock whenever you are ready."
-	elif labion_available:
-		explanation_label.text = "Monolith Burger is an optional stop. Labion begins the next leg of Roger's chase."
-	else:
-		explanation_label.text = "Monolith Burger's local route is built in. Recover the museum star map to unlock Labion."
+	for button in destination_buttons.values():
+		button.hide()
+	for index in range(routes.size()):
+		var route: Dictionary = routes[index]
+		var id: String = str(route.get("id", ""))
+		if not destination_buttons.has(id):
+			continue
+		var button: Button = destination_buttons[id]
+		var enabled := bool(route.get("enabled", false))
+		button.text = ("Fly to " if enabled else "Locked — ") + str(route.get("label", DESTINATION_NAMES[id]))
+		button.disabled = not enabled
+		button.tooltip_text = str(route.get("reason", ""))
+		button.set_meta("route", route.duplicate())
+		button.show()
+		route_list.move_child(button, index)
+	route_scroll.scroll_vertical = 0
+	route_label.text = "DEPARTURE: " + str(game.ROOM_NAMES.get(room, room)).to_upper()
+	explanation_label.text = "Choose a destination. Scroll for more routes; hover over a locked route to see how to open it."
 	show()
 	queue_redraw()
+
+func _describe_route(id: String) -> void:
+	if not _menu_open or not destination_buttons.has(id):
+		return
+	var button: Button = destination_buttons[id]
+	var route: Dictionary = button.get_meta("route", {})
+	if button.disabled:
+		explanation_label.text = "Route locked: " + str(route.get("reason", "Keep investigating to discover this route."))
+	else:
+		explanation_label.text = "Ready to fly to " + str(route.get("label", DESTINATION_NAMES[id])) + ". Your shuttle can return to earlier destinations."
 
 func close_menu() -> void:
 	_menu_open = false
@@ -162,10 +210,20 @@ func begin_flight(destination_id: String) -> void:
 	_flight_elapsed = 0.0
 	_arrival_sent = false
 	_flight_active = true
-	_departure = "MONOLITH BURGER" if str(game.state.get("room", "dock")) == "monolith" else "SERVICE DOCK 7"
-	flight_heading.text = "APPROACHING MONOLITH BURGER" if destination_id == "monolith" else "RETURNING TO SERVICE DOCK 7" if destination_id == "dock" else "SETTING COURSE FOR LABION"
+	_departure_room = str(game.state.get("room", "dock"))
+	_departure = str(game.ROOM_NAMES.get(_departure_room, _departure_room)).to_upper()
+	flight_heading.text = ("RETURNING TO " if destination_id == "dock" else "APPROACHING ") + str(DESTINATION_NAMES[destination_id])
 	flight_route.text = _departure + "  →  " + str(DESTINATION_NAMES[destination_id])
-	flight_caption.text = "Roger hopes the drive-through has a less literal definition of 'drive'." if destination_id == "monolith" else "A successful burger run. The paperwork will claim it was reconnaissance." if destination_id == "dock" else "One small trip for a janitor. One enormous overtime claim."
+	flight_caption.text = {
+		"monolith": "Roger hopes the drive-through has a less literal definition of 'drive'.",
+		"dock": "Back to the dock. The paperwork will claim this was reconnaissance.",
+		"labion": "One small trip for a janitor. One enormous overtime claim.",
+		"plexi": "A planet of glass. Roger starts regretting the fingerprints already.",
+		"starcon": "Advanced mop dynamics. Finally, a subject with practical applications.",
+		"polysorbate": "The approach smells expensive. Or possibly flammable.",
+		"glitzon": "Roger practices his celebrity wave. It still resembles a distress signal.",
+		"finale": "Five legendary cleaning tools. One deeply overdue performance review."
+	}.get(destination_id, "Please keep all limbs and cleaning equipment inside the shuttle.")
 	flight_labels.show()
 	show()
 	_update_flight_text()
@@ -201,7 +259,11 @@ func _draw() -> void:
 	if not _flight_active:
 		return
 	var progress := clampf(_flight_elapsed / FLIGHT_DURATION, 0.0, 1.0)
-	var texture_name := "flight_labion" if _flight_destination == "labion" else "flight_monolith"
+	var texture_name: String = "room_" + str(game.Campaign.destination_room(game, _flight_destination))
+	if _flight_destination == "monolith" or (_flight_destination == "dock" and _departure_room.begins_with("monolith")):
+		texture_name = "flight_monolith"
+	elif _flight_destination == "labion":
+		texture_name = "flight_labion"
 	if game.textures.has(texture_name):
 		var zoom := 1.035 - 0.035 * progress if _flight_destination == "dock" else 1.0 + 0.035 * progress
 		var dimensions := size * zoom
