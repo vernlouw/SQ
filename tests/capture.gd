@@ -16,6 +16,8 @@ func capture() -> void:
 	var sound := false
 	var bits := false
 	var burger := false
+	var travel := false
+	var flight := false
 	var interaction := ""
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--room="):
@@ -32,9 +34,13 @@ func capture() -> void:
 			bits = true
 		elif argument == "--burger":
 			burger = true
+		elif argument == "--travel":
+			travel = true
+		elif argument == "--flight":
+			flight = true
 		elif argument.begins_with("--interact="):
 			interaction = argument.trim_prefix("--interact=")
-	if room_id not in ["diner", "dock", "museum"]:
+	if room_id not in ["diner", "dock", "museum", "monolith"]:
 		push_error("Unknown room: " + room_id)
 		quit(1)
 		return
@@ -49,7 +55,8 @@ func capture() -> void:
 		game.new_game(false)
 		game.enter_room(room_id)
 	if portrait and not title:
-		game.perform_action("cook" if room_id == "diner" else "guard" if room_id == "dock" else "guardian", "Talk")
+		var speaker: String = {"diner": "cook", "dock": "guard", "museum": "guardian", "monolith": "manager"}[room_id]
+		game.perform_action(speaker, "Talk")
 	if bits and not title:
 		game.show_hotspots = true
 	if not interaction.is_empty() and not title:
@@ -62,8 +69,16 @@ func capture() -> void:
 	if burger and not title:
 		game.close_dialogue()
 		game.open_burger_shift()
+	if (travel or flight) and not title:
+		game.close_dialogue()
+		game.open_travel_menu()
+		if flight:
+			game.choose_destination("dock" if room_id == "monolith" else "monolith")
+			game.travel.set_process(false)
 	if sound:
 		game.toggle_sound_panel()
+	game.hovered = ""
+	game.set_process(false)
 	# Allow the imported textures and Control layout to reach the render server.
 	await process_frame
 	await process_frame

@@ -1,5 +1,5 @@
 extends Node2D
-## A complete, original three-room adventure chapter. All puzzle actions are also
+## A four-room adventure chapter with an optional shuttle trip. Puzzle actions are
 ## exposed through perform_action so the walkthrough can run without rendering.
 
 const SAVE_PATH := "user://the_mop_job_save.json"
@@ -7,13 +7,15 @@ const AdventureAudio := preload("res://scripts/audio.gd")
 const RoomBits := preload("res://scripts/room_bits.gd")
 const BitVisuals := preload("res://scripts/bit_visuals.gd")
 const BurgerShift := preload("res://scripts/burger_shift.gd")
+const ShuttleTravel := preload("res://scripts/shuttle_travel.gd")
 const VERBS := ["Look", "Use", "Talk"]
 const KEY_ACTIONS := ["Interact", "Look", "Use", "Talk"]
-const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM"}
+const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM", "monolith": "MONOLITH BURGER"}
 const ROOM_INTROS := {
 	"diner": "Your shift ended three hours ago. Naturally, the universe waited until now to need a janitor.",
 	"dock": "A dock inspector, a grounded shuttle, and an impressive backlog of paperwork. Home sweet bureaucracy.",
-	"museum": "The museum's priceless navigation archive is guarded by a machine with very strong opinions about cleanliness."
+	"museum": "The museum's priceless navigation archive is guarded by a machine with very strong opinions about cleanliness.",
+	"monolith": "Monolith Burger. Billions served, several identified. Your shuttle is waiting at the berth on the right."
 }
 const INVENTORY_NAMES := {"service chit": "Service chit", "grease": "Fryer grease", "keycard": "Dock keycard", "maintenance pass": "Maintenance pass", "mop": "Service mop", "cleaner": "Ion cleaner", "charged mop": "Charged mop", "star map": "Star map", "novelty badge": "Souvenir novelty badge", "monolith coupon": "Monolith Burger meal coupon"}
 const ITEM_SHORT := {"service chit": "CHIT", "grease": "GREASE", "keycard": "CARD", "maintenance pass": "PASS", "mop": "MOP", "cleaner": "CLEANER", "charged mop": "ION MOP", "star map": "MAP", "novelty badge": "BADGE", "monolith coupon": "COUPON"}
@@ -41,6 +43,12 @@ const HOTSPOTS := {
 		"spill": {"rect": Rect2(299, 249, 70, 41), "at": Vector2(288, 282), "name": "Ion coolant spill"},
 		"plinth": {"rect": Rect2(386, 122, 100, 120), "at": Vector2(406, 276), "name": "Navigation archive"},
 		"exit": {"rect": Rect2(563, 79, 69, 191), "at": Vector2(570, 274), "name": "Back to service dock"}
+	},
+	"monolith": {
+		"manager": {"rect": Rect2(365, 124, 59, 60), "at": Vector2(397, 277), "name": "Flipp, the shift manager"},
+		"shift_counter": {"rect": Rect2(281, 137, 48, 44), "at": Vector2(299, 277), "name": "Relief-shift order terminal"},
+		"counter": {"rect": Rect2(252, 179, 309, 61), "at": Vector2(388, 280), "name": "Monolith Burger counter"},
+		"exit": {"rect": Rect2(581, 92, 59, 137), "at": Vector2(586, 271), "name": "Shuttle berth"}
 	}
 }
 
@@ -100,15 +108,22 @@ var burger_order: Label
 var burger_feedback: Label
 var burger_choice_buttons: Dictionary = {}
 var burger_close_button: Button
+var travel
+var flight_destination := ""
 
 func _ready() -> void:
 	audio = AdventureAudio.new()
 	audio.name = "AdventureAudio"
 	add_child(audio)
-	for name in ["room_diner", "room_dock", "room_museum", "roger", "roger_walk", "cook", "guard", "portrait_roger", "portrait_cook", "portrait_guard", "portrait_clone"]:
+	for name in ["room_diner", "room_dock", "room_museum", "room_monolith", "flight_monolith", "flight_labion", "roger", "roger_walk", "cook", "guard", "portrait_roger", "portrait_cook", "portrait_guard", "portrait_clone"]:
 		var path: String = "res://assets/" + name + ".png"
 		if ResourceLoader.exists(path):
 			textures[name] = load(path)
+	if textures.has("room_monolith"):
+		var manager_portrait := AtlasTexture.new()
+		manager_portrait.atlas = textures["room_monolith"]
+		manager_portrait.region = Rect2(947, 311, 181, 182)
+		textures["portrait_manager"] = manager_portrait
 	_build_ui()
 	new_game(false)
 	show_title()
@@ -141,6 +156,8 @@ func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Ca
 		if sound_is_open() and parent != sound_panel:
 			return
 		if burger_is_open() and parent != burger_panel and parent != sound_panel:
+			return
+		if flight_is_active() or (travel_is_open() and parent != sound_panel):
 			return
 		if title_is_open() and parent == hud:
 			return
@@ -214,7 +231,7 @@ func _build_ui() -> void:
 	hud.add_child(finale_panel)
 	_label("CHAPTER COMPLETE", Vector2(28, 20), Vector2(414, 24), 13, finale_panel).add_theme_color_override("font_color", Color("efca84"))
 	_label("THE MOP JOB", Vector2(28, 47), Vector2(414, 41), 30, finale_panel)
-	var ending := _label("The archive is safe. The clone is on Labion.\n\nYou point the courier toward the orange planet and wonder whether overtime covers saving the galaxy.\n\nA complete three-room chapter. The chase continues…", Vector2(28, 99), Vector2(412, 106), 13, finale_panel)
+	var ending := _label("The archive is safe. The clone is on Labion.\n\nYou point the courier toward the orange planet and wonder whether overtime covers saving the galaxy.\n\nFour locations, one optional burger shift. The chase continues…", Vector2(28, 99), Vector2(412, 106), 13, finale_panel)
 	ending.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_button("Play again", Vector2(313, 197), Vector2(126, 25), func(): new_game(), finale_panel)
 	finale_panel.hide()
@@ -224,6 +241,9 @@ func _build_ui() -> void:
 	sound_button.tooltip_text = "Music, effects and ambience — M"
 	_build_title_panel()
 	_build_burger_panel()
+	travel = ShuttleTravel.new()
+	hud.add_child(travel)
+	travel.setup(self)
 	_build_sound_panel()
 
 func _build_burger_panel() -> void:
@@ -254,14 +274,17 @@ func burger_is_open() -> bool:
 	return is_instance_valid(burger_panel) and burger_panel.visible
 
 func open_burger_shift() -> void:
-	if title_is_open() or sound_is_open() or flag("complete"):
+	if title_is_open() or sound_is_open() or travel_is_open() or flight_is_active() or flag("complete"):
+		return
+	if state.get("room", "") != "monolith":
+		say("The relief shift is at Monolith Burger. Board the dock shuttle and choose its local route.")
 		return
 	close_dialogue()
 	pending_interaction.clear()
 	destination = player
 	audio.update_footsteps(0.0, false)
 	BurgerShift.start(self)
-	burger_feedback.text = "Bex borrowed Monolith Burger's relief-shift tickets. Three orders earn a meal coupon; there is no timer."
+	burger_feedback.text = "Flipp needs a relief worker. Serve three orders to earn a meal coupon; there is no timer."
 	_refresh_burger_shift()
 	burger_shade.show()
 	burger_panel.show()
@@ -273,6 +296,79 @@ func close_burger_shift() -> void:
 		burger_panel.hide()
 		burger_shade.hide()
 
+func travel_is_open() -> bool:
+	return is_instance_valid(travel) and travel.menu_is_open()
+
+func flight_is_active() -> bool:
+	return is_instance_valid(travel) and travel.flight_is_active()
+
+func open_travel_menu() -> void:
+	if state.get("room", "") not in ["dock", "monolith"] or title_is_open() or sound_is_open() or burger_is_open() or flight_is_active() or flag("complete"):
+		return
+	close_dialogue()
+	pending_interaction.clear()
+	destination = player
+	selected = ""
+	verb = "Interact"
+	hovered = ""
+	audio.update_footsteps(0.0, false)
+	travel.open_menu(state["room"], flag("coordinates_set"))
+	update_hud()
+
+func close_travel_menu() -> void:
+	if not travel_is_open() or sound_is_open():
+		return
+	travel.close_menu()
+	say("Navigation closed. The shuttle is still here whenever you need it.")
+	queue_redraw()
+
+func choose_destination(id: String) -> bool:
+	if not travel_is_open() or sound_is_open() or flight_is_active():
+		return false
+	var room: String = state["room"]
+	if (room == "dock" and id not in ["monolith", "labion"]) or (room == "monolith" and id != "dock"):
+		return false
+	if id == "labion" and not flag("coordinates_set"):
+		audio.play_sfx("blocked")
+		return false
+	flight_destination = id
+	selected = ""
+	verb = "Interact"
+	pending_interaction.clear()
+	destination = player
+	audio.update_footsteps(0.0, false)
+	audio.play_sfx("terminal")
+	travel.begin_flight(id)
+	say("Course set: " + ("Labion" if id == "labion" else str(ROOM_NAMES[id])) + ". Please keep all existential crises inside the shuttle.")
+	update_hud()
+	return true
+
+func finish_flight() -> void:
+	if not flight_is_active():
+		return
+	var arrival := flight_destination
+	_cancel_travel()
+	if arrival == "labion":
+		award("complete", 10)
+		dialogue_lines.clear()
+		dialogue_panel.hide()
+		finale_panel.show()
+		say("Course set for Labion. Chapter complete — 100/100.")
+		update_hud()
+	elif arrival in ["monolith", "dock"]:
+		var trips: Dictionary = state.get("travel", {}) if state.get("travel", {}) is Dictionary else {}
+		trips["trips"] = int(trips.get("trips", 0)) + 1
+		if arrival == "monolith":
+			trips["visited_monolith"] = true
+		state["travel"] = trips
+		enter_room(arrival, Vector2(568, 279) if arrival == "monolith" else Vector2(329, 278))
+
+func _cancel_travel() -> void:
+	if is_instance_valid(travel):
+		travel.close_menu()
+		travel.cancel_flight()
+	flight_destination = ""
+
 func _refresh_burger_shift() -> void:
 	for button in burger_choice_buttons.values():
 		burger_panel.remove_child(button)
@@ -282,7 +378,7 @@ func _refresh_burger_shift() -> void:
 	burger_progress.text = str(shift.get("progress", ""))
 	var order: Dictionary = shift.get("order", {})
 	if shift.get("completed", false):
-		burger_order.text = "SHIFT COMPLETE\nYour coupon is ready. Show it to Bex for your staff meal."
+		burger_order.text = "SHIFT COMPLETE\nYour coupon is ready. Show it to Flipp for your staff meal."
 		if shift.get("coupon_redeemed", false):
 			burger_order.text = "SHIFT COMPLETE\nYour meal is collected. The galaxy can have its janitor back."
 	else:
@@ -369,6 +465,7 @@ func checkpoint_available() -> bool:
 	return saved_position is Array and saved_position.size() == 2 and (saved_position[0] is float or saved_position[0] is int) and (saved_position[1] is float or saved_position[1] is int)
 
 func show_title() -> void:
+	_cancel_travel()
 	title_continue_button.disabled = not checkpoint_available()
 	title_continue_button.tooltip_text = "Resume your checkpoint" if not title_continue_button.disabled else "Save a checkpoint during play to enable Continue"
 	title_status.text = "Enter or Esc starts a new game • Music is skippable"
@@ -451,6 +548,8 @@ func sound_is_open() -> bool:
 	return is_instance_valid(sound_panel) and sound_panel.visible
 
 func toggle_sound_panel() -> void:
+	if flight_is_active():
+		return
 	if sound_is_open():
 		close_sound_panel()
 		return
@@ -469,8 +568,16 @@ func close_sound_panel() -> void:
 	queue_redraw()
 
 func _input(event: InputEvent) -> void:
+	if flight_is_active():
+		if (event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]) or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+			finish_flight()
+			get_viewport().set_input_as_handled()
+		return
 	if sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ESCAPE, KEY_M]:
 		close_sound_panel()
+		get_viewport().set_input_as_handled()
+	elif travel_is_open() and not sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		close_travel_menu()
 		get_viewport().set_input_as_handled()
 	elif burger_is_open() and not sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		close_burger_shift()
@@ -483,6 +590,7 @@ func _input(event: InputEvent) -> void:
 func new_game(show_intro: bool = true) -> void:
 	close_sound_panel()
 	close_burger_shift()
+	_cancel_travel()
 	_hide_title()
 	intro_dialogue_active = false
 	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
@@ -537,7 +645,7 @@ func remove_item(item: String) -> void:
 		selected = ""
 
 func set_verb(action: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open():
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
 		return
 	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
@@ -568,7 +676,7 @@ func _advance_dialog() -> void:
 	var line: String = dialogue_lines.pop_front()
 	audio.play_sfx("dialogue")
 	dialogue_text.text = line
-	speaker_label.text = {"roger": "ROGER — SANITATION / RELUCTANT HERO", "cook": "BEX — HEAD COOK / OIL BARON", "guard": "VOSS — DOCK INSPECTOR", "guardian": "ARCHIVE GUARDIAN / MAINTENANCE AI", "clone": "R0-GER — RECORDED MESSAGE"}.get(dialogue_speaker, "TRANSMISSION")
+	speaker_label.text = {"roger": "ROGER — SANITATION / RELUCTANT HERO", "cook": "BEX — HEAD COOK / OIL BARON", "guard": "VOSS — DOCK INSPECTOR", "guardian": "ARCHIVE GUARDIAN / MAINTENANCE AI", "clone": "R0-GER — RECORDED MESSAGE", "manager": "FLIPP — MONOLITH BURGER SHIFT MANAGER"}.get(dialogue_speaker, "TRANSMISSION")
 	portrait.texture = textures.get("portrait_" + ("guard" if dialogue_speaker == "guardian" else dialogue_speaker), null)
 	dialogue_panel.show()
 	say(line)
@@ -615,7 +723,10 @@ func update_hud() -> void:
 	queue_redraw()
 
 func select_item(item: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or not has_item(item):
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active() or not has_item(item):
+		return
+	if selected == item:
+		reset_interaction()
 		return
 	if selected != "" and selected != item:
 		if combine_items(selected, item):
@@ -646,13 +757,13 @@ func combine_items(first: String, second: String) -> bool:
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	if not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open():
+	if not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active():
 		for index in range(bit_effects.size() - 1, -1, -1):
 			bit_effects[index]["remaining"] -= delta
 			if bit_effects[index]["remaining"] <= 0.0:
 				bit_effects.remove_at(index)
 	var moving := player.distance_to(destination) > 1.0
-	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not flag("complete")
+	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not flag("complete")
 	if walking:
 		var old_position := player
 		facing_right = destination.x >= player.x
@@ -665,12 +776,16 @@ func _process(delta: float) -> void:
 	else:
 		audio.update_footsteps(0.0, false)
 	var mouse := get_global_mouse_position()
-	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() else ""
+	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() else ""
 	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if sound_is_open():
+	if sound_is_open() or flight_is_active():
+		return
+	if travel_is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
+			toggle_sound_panel()
 		return
 	if title_is_open():
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
@@ -752,7 +867,7 @@ func hotspot_at(point: Vector2) -> String:
 	return best
 
 func route_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open() or burger_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -768,7 +883,7 @@ func route_click(point: Vector2) -> void:
 	queue_world_action(id, action, selected)
 
 func route_right_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open() or burger_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -798,7 +913,7 @@ func default_action(id: String) -> String:
 	return "Use"
 
 func is_character(id: String) -> bool:
-	return id in ["cook", "guard", "guardian"]
+	return id in ["cook", "guard", "guardian", "manager"]
 
 func action_for(id: String) -> String:
 	var action := default_action(id) if verb == "Interact" else verb
@@ -812,12 +927,14 @@ func contextual_action_label(id: String) -> String:
 		return "Inspect"
 	if action == "Talk":
 		return "Talk to"
-	if id == "counter":
+	if id in ["counter", "shift_counter"]:
 		return "Interact with"
 	if id.begins_with("bit_"):
 		return str(room_hotspots()[id].get("use_label", "Use"))
 	if id in ["grease", "mop"] or (id == "plinth" and not flag("archive_taken")):
 		return "Pick up"
+	if id == "exit" and state.get("room", "") == "monolith":
+		return "Board"
 	if id in ["exit", "museum"]:
 		return "Enter"
 	if id == "shuttle":
@@ -839,7 +956,7 @@ func interact(id: String) -> void:
 	perform_action(id, "Use" if selected != "" else action_for(id), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
-	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open() or burger_is_open():
+	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
 		return
 	if item == "" and action in ["Use", "Interact"]:
 		item = selected
@@ -853,9 +970,12 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 		say("That object isn't in this room.")
 		audio.play_sfx("blocked")
 		return
-	if action == "Use" and id in ["cook", "counter"] and item == "monolith coupon":
-		var reward: Dictionary = BurgerShift.redeem(self)
-		show_dialog("cook", [str(reward.get("message", ""))])
+	if action == "Use" and item == "monolith coupon" and ((room == "monolith" and id in ["manager", "counter"]) or (room == "diner" and id in ["cook", "counter"])):
+		if room == "monolith":
+			var reward: Dictionary = BurgerShift.redeem(self)
+			show_dialog("manager", [str(reward.get("message", ""))])
+		else:
+			show_dialog("cook", ["That's a Monolith Burger meal coupon. My till only accepts credits, apologies and plausible excuses. Take the dock shuttle to their space restaurant; Flipp will redeem it there."])
 		update_hud()
 		return
 	if action != "Walk" and RoomBits.handle(self, room, id, action, item):
@@ -878,8 +998,9 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 func inspect_object(id: String) -> void:
 	var descriptions := {
 		"diner": {"news": "SECURITY BULLETIN: a counterfeit janitor stole the Mop of Destiny. The museum's navigation archive recorded his escape. That face looks horribly familiar.", "cook": "Bex has fed six civilizations and poisoned only the ones that complained.", "grease": "Industrial fryer grease. According to the label: condiment, lubricant, and emergency rocket fuel.", "counter": "The sanitation service desk is cunningly disguised as a burger counter. Bex probably has your paperwork.", "panel": "The hatch's exposed gears have seized. A little lubricant should free them.", "exit": "The service dock is through this hatch. The mechanism is " + ("running smoothly." if flag("hatch_fixed") else "jammed solid.")},
-		"dock": {"exit": "Back to the diner. The menu is less hazardous than most planets.", "locker": "A card-operated maintenance locker. It contains ion cleaner and controls the magnetic clamp on the nearby mop.", "mop": "A service mop leans beside the locker. Its magnetic security clamp releases when the locker is opened with a dock keycard.", "guard": "Inspector Voss. Protector of the dock, sworn enemy of unsigned forms.", "terminal": "The dock console manages museum access and shuttle navigation. Card reader on the left, archive socket on the right.", "museum": "A lift to the Arcada Memorial Museum. The control terminal authorizes entry.", "shuttle": "A courier shuttle with a perfectly good engine and absolutely no destination. The museum's stolen archive should tell you where the clone went."},
-		"museum": {"kiosk": "INCIDENT REPORT: clone R0-GER departed for Labion. Exact coordinates are stored in the navigation archive. Maintenance rules: present a pass; neutralize ion coolant with a charged mop.", "guardian": "A security automaton whose cleaning subroutine outranks its security subroutine. There is hope for us all.", "spill": "Ion coolant. A dry mop will only spread it. The maintenance locker has ion cleaner; combine it with a mop first.", "plinth": "The navigation archive floats behind a laser seal. Maintenance mode releases it only when the floor is clean.", "exit": "The service lift returns to your waiting courier."}
+		"dock": {"exit": "Back to the diner. The menu is less hazardous than most planets.", "locker": "A card-operated maintenance locker. It contains ion cleaner and controls the magnetic clamp on the nearby mop.", "mop": "A service mop leans beside the locker. Its magnetic security clamp releases when the locker is opened with a dock keycard.", "guard": "Inspector Voss. Protector of the dock, sworn enemy of unsigned forms.", "terminal": "The dock console manages museum access and shuttle navigation. Card reader on the left, archive socket on the right.", "museum": "A lift to the Arcada Memorial Museum. The control terminal authorizes entry.", "shuttle": "The courier's local route to Monolith Burger is already programmed. To pursue the clone to Labion, recover the museum's star map and load it at the dock terminal."},
+		"museum": {"kiosk": "INCIDENT REPORT: clone R0-GER departed for Labion. Exact coordinates are stored in the navigation archive. Maintenance rules: present a pass; neutralize ion coolant with a charged mop.", "guardian": "A security automaton whose cleaning subroutine outranks its security subroutine. There is hope for us all.", "spill": "Ion coolant. A dry mop will only spread it. The maintenance locker has ion cleaner; combine it with a mop first.", "plinth": "The navigation archive floats behind a laser seal. Maintenance mode releases it only when the floor is clean.", "exit": "The service lift returns to your waiting courier."},
+		"monolith": {"manager": "Flipp: an optimistic robot whose smile survived forty-seven firmware updates and one health inspection.", "shift_counter": "Three relief-shift orders, all inspired by your previous adventures. No timer. Flipp is short-staffed, not cruel.", "counter": "The real Monolith Burger counter. Flipp trades a short relief shift for a meal coupon. Saving the galaxy apparently doesn't qualify for a discount.", "exit": "Your shuttle is docked through the airlock. Board it to fly back to Service Dock 7; all your museum paperwork will still be waiting."}
 	}
 	show_dialog("roger", [descriptions[state["room"]].get(id, "Worth another look.")])
 
@@ -902,6 +1023,14 @@ func talk_to(id: String) -> void:
 				show_dialog("guard", ["Nobody enters the museum without a maintenance pass. Bring me a current service chit, and I can issue the pass and your locker keycard. Yes, even during a galactic emergency."])
 		"museum:guardian":
 			show_dialog("guardian", ["ARCHIVE RESTRICTED. Maintenance personnel: present valid pass. Then neutralize coolant using an ion-charged mop. Once the floor meets policy 8-B, the archive may be removed for inspection.", "Clone departure logged: LABION. I would pursue him myself, but my wheels are rated for indoor flooring only."])
+		"monolith:manager":
+			var shift: Dictionary = BurgerShift.status(self)
+			if shift.get("coupon_redeemed", false):
+				show_dialog("manager", ["Your staff meal is served, Roger. You can take the shuttle home, or stay and admire a floor someone else is paid to clean."])
+			elif shift.get("completed", false):
+				show_dialog("manager", ["Excellent shift! Select the COUPON in your pockets and show it to me for your meal. Corporate insists that gratitude pass through the till."])
+			else:
+				show_dialog("manager", ["Welcome to Monolith Burger! You look familiar. Didn't you once work for us? Personnel records only go back three management catastrophes.", "I'm Flipp. Tap the order terminal or counter for a three-order relief shift. Earn a meal coupon, make a few old-game references, and leave whenever you like. No timer, no firing, no mandatory hat."])
 		_:
 			show_dialog("roger", ["It has nothing to say. We have that in common at staff meetings."])
 
@@ -993,15 +1122,28 @@ func use_object(id: String, item: String) -> void:
 						audio.play_sfx("blocked")
 						show_dialog("guard", ["Authorize the lift at the dock terminal. It needs your keycard."])
 				"shuttle":
-					if flag("coordinates_set"):
-						award("complete", 10)
-						dialogue_lines.clear()
-						dialogue_panel.hide()
-						finale_panel.show()
-						say("Course set for Labion. Chapter complete — 100/100.")
+					if item == "":
+						open_travel_menu()
 					else:
 						audio.play_sfx("blocked")
-						show_dialog("roger", ["The shuttle needs a destination. Retrieve the museum's navigation archive and use it on the dock terminal first."])
+						show_dialog("roger", ["The shuttle prefers passengers to pocket items. Deselect your item and board to choose a destination. The star map belongs in the dock terminal."])
+		"monolith":
+			match id:
+				"exit":
+					if item == "":
+						open_travel_menu()
+					else:
+						show_dialog("roger", ["Your pockets can come aboard with you. Deselect the item and click the berth to choose the return flight."])
+				"manager":
+					if item == "":
+						talk_to("manager")
+					else:
+						show_dialog("manager", ["Our till accepts meal coupons, Roger. That looks more like something from your other job."])
+				"counter", "shift_counter":
+					if item == "":
+						open_burger_shift()
+					else:
+						show_dialog("manager", ["The order terminal needs a willing employee, not " + str(INVENTORY_NAMES.get(item, item)) + ". Click your selected pocket item again, then tap the screen."])
 		"museum":
 			match id:
 				"exit":
@@ -1046,6 +1188,7 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	if not ROOM_NAMES.has(room):
 		return
 	close_burger_shift()
+	_cancel_travel()
 	if state.get("room", "") != room:
 		audio.play_sfx("door")
 	state["room"] = room
@@ -1063,7 +1206,16 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	update_hud()
 
 func give_hint() -> void:
-	if sound_is_open() or title_is_open() or burger_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open() or travel_is_open() or flight_is_active():
+		return
+	if state.get("room", "") == "monolith":
+		var shift: Dictionary = BurgerShift.status(self)
+		var local_hint := "Talk to Flipp, then click the order terminal or counter for an optional relief shift. The berth on the right takes you back to the dock."
+		if shift.get("completed", false) and not shift.get("coupon_redeemed", false):
+			local_hint = "Select COUPON in your pockets and click Flipp to collect your meal. The shuttle berth on the right opens your return flight."
+		elif shift.get("coupon_redeemed", false):
+			local_hint = "Your Monolith Burger shift is complete. Click the shuttle berth on the right, then choose Service Dock 7 to continue the clone investigation."
+		show_dialog("roger", [local_hint])
 		return
 	var hint := "The courier is ready. Click the shuttle in the dock to board."
 	if not flag("cook_help"):
@@ -1093,6 +1245,8 @@ func give_hint() -> void:
 	show_dialog("roger", [hint])
 
 func save_game() -> bool:
+	if travel_is_open() or flight_is_active():
+		return false
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file == null:
 		say("Couldn't write the save file: " + error_string(FileAccess.get_open_error()))
@@ -1133,6 +1287,7 @@ func load_game() -> bool:
 		return false
 	state = snapshot
 	close_burger_shift()
+	_cancel_travel()
 	bit_effects.clear()
 	state.erase("player")
 	state["score"] = int(state.get("score", 0))
@@ -1190,7 +1345,7 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, label_position + Vector2(8, 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("ffe4ac"))
 
 func _draw_fallback_room(room: String) -> void:
-	var colors := {"diner": Color("654054"), "dock": Color("24414d"), "museum": Color("39394e")}
+	var colors := {"diner": Color("654054"), "dock": Color("24414d"), "museum": Color("39394e"), "monolith": Color("715032")}
 	draw_rect(Rect2(0, 26, 640, 292), colors[room])
 	for i in range(9):
 		draw_line(Vector2(i * 80, 26), Vector2(i * 80, 318), Color(0.1, 0.14, 0.2, 0.3), 2)
@@ -1243,7 +1398,7 @@ func draw_ellipse(rect: Rect2, color: Color) -> void:
 	draw_colored_polygon(points, color)
 
 func _draw_player() -> void:
-	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not flag("complete")
+	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not travel_is_open() and not flight_is_active() and not flag("complete")
 	var bob := sin(elapsed * 11) * 1.2 if moving else sin(elapsed * 1.7) * 0.3
 	var perspective_height := lerpf(105.0, 140.0, clampf((player.y - 257.0) / 49.0, 0.0, 1.0))
 	draw_ellipse(Rect2(player.x - 22, player.y - 4, 45, 10), Color(0.01, 0.015, 0.025, 0.45))

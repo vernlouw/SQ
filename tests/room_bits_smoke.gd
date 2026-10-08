@@ -79,7 +79,7 @@ func check_targets() -> void:
 		for id in bits_script.HOTSPOTS[room_id]:
 			optional_count += 1
 			expect(merged.has(id) and clickable_point(id).x >= 0, "Optional object is included and clickable: " + room_id + ":" + id)
-	expect(optional_count >= 15, "The three rooms provide at least fifteen optional interactions")
+	expect(optional_count >= 19, "The four rooms provide at least nineteen optional interactions")
 	completed_cases["targets"] = true
 
 func check_all_inspections() -> void:
@@ -176,8 +176,8 @@ func check_badge() -> void:
 	game.add_item("service chit")
 	game.add_item("keycard")
 	game.add_item("maintenance pass")
-	for room_id in {"diner": "cook", "dock": "guard", "museum": "guardian"}:
-		var person: String = {"diner": "cook", "dock": "guard", "museum": "guardian"}[room_id]
+	for room_id in {"diner": "cook", "dock": "guard", "museum": "guardian", "monolith": "manager"}:
+		var person: String = {"diner": "cook", "dock": "guard", "museum": "guardian", "monolith": "manager"}[room_id]
 		game.enter_room(room_id, Vector2(45, 302))
 		var story_before := story_snapshot()
 		await process_frame
@@ -288,7 +288,7 @@ func check_character_only_talk() -> void:
 		game.set_verb("Talk")
 		for id in game.room_hotspots(room_id):
 			var label: String = game.contextual_action_label(id)
-			if id in ["cook", "guard", "guardian"]:
+			if id in ["cook", "guard", "guardian", "manager"]:
 				expect(label == "Talk to", "Talk hover applies to the actual character " + id)
 			else:
 				expect(label != "Talk to", "Object hover describes an object action instead of conversation: " + id)
@@ -299,7 +299,11 @@ func check_character_only_talk() -> void:
 	expect(not game.state.get("bits", {}).has("talks:bit_coffee"), "Objects do not acquire conversation counters")
 	game.close_dialogue()
 	act("bit_menu", "Talk")
-	expect(game.burger_is_open(), "Talk override on the menu opens its normal optional job")
+	expect(not game.burger_is_open() and game.dialogue_panel.visible, "Talk override on the diner advertisement gives directions without starting a job")
+	game.close_dialogue()
+	game.enter_room("monolith")
+	act("shift_counter", "Talk")
+	expect(game.burger_is_open(), "Talk override on the restaurant terminal opens its normal relief shift")
 	game.close_burger_shift()
 	game.new_game(false)
 	game.enter_room("dock")
@@ -330,6 +334,7 @@ func check() -> void:
 	await check_optional_click("diner", "bit_coffee")
 	await check_optional_click("dock", "bit_crates")
 	await check_optional_click("museum", "bit_telescope")
+	await check_optional_click("monolith", "bit_monolith_mascot")
 	check_repeats()
 	check_wrong_items()
 	await check_badge()
@@ -337,7 +342,7 @@ func check() -> void:
 	await check_modal_blocking()
 	check_effect_lifecycle()
 	check_character_only_talk()
-	for scenario in ["targets", "inspection", "diner:mouse", "dock:mouse", "museum:mouse", "repeats", "wrong_items", "badge", "persistence", "modals", "effects", "character_talk"]:
+	for scenario in ["targets", "inspection", "diner:mouse", "dock:mouse", "museum:mouse", "monolith:mouse", "repeats", "wrong_items", "badge", "persistence", "modals", "effects", "character_talk"]:
 		expect(completed_cases.get(scenario, false), "Scenario completed without a script interruption: " + scenario)
 	game.queue_free()
 	await create_timer(0.15).timeout

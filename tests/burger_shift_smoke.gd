@@ -16,6 +16,10 @@ func expect(condition: bool, description: String) -> void:
 		failures += 1
 		push_error("FAIL: " + description)
 
+func start_restaurant() -> void:
+	game.new_game(false)
+	game.enter_room("monolith")
+
 func snapshot() -> Dictionary:
 	return {"room": game.state["room"], "score": game.state["score"], "flags": game.state["flags"].duplicate(true), "inventory": game.state["inventory"].duplicate()}
 
@@ -65,7 +69,7 @@ func finish_walk() -> void:
 		game._process(1.0 / 60.0)
 		if game.pending_interaction.is_empty() and game.player.distance_to(game.destination) <= 1.0:
 			break
-	expect(game.pending_interaction.is_empty(), "Roger reaches the menu and completes its queued interaction")
+	expect(game.pending_interaction.is_empty(), "Roger reaches the order terminal and completes its queued interaction")
 
 func act(id: String, action := "Use", item := "") -> void:
 	game.close_dialogue()
@@ -90,17 +94,23 @@ func check_choice_geometry() -> void:
 
 func check_open_and_retry() -> void:
 	game.new_game(false)
+	var diner_before: Dictionary = game.state.duplicate(true)
+	act("bit_menu", "Look")
+	expect(game.state == diner_before and not game.burger_is_open(), "Diner advertisement inspection is read-only")
+	act("bit_menu")
+	expect(not game.burger_is_open() and not shift.status(game)["started"], "The diner advert gives directions instead of opening the restaurant job")
+	start_restaurant()
 	var original := snapshot()
 	var original_state: Dictionary = game.state.duplicate(true)
-	act("bit_menu", "Look")
+	act("shift_counter", "Look")
 	expect(game.state == original_state and not game.burger_is_open(), "Inspecting the menu is read-only and does not start a shift")
 	game.player = Vector2(45, 302)
 	game.destination = game.player
-	var menu_rect: Rect2 = game.room_hotspots()["bit_menu"]["rect"]
+	var menu_rect: Rect2 = game.room_hotspots()["shift_counter"]["rect"]
 	await click(game.get_global_transform_with_canvas() * menu_rect.get_center())
-	expect(not game.pending_interaction.is_empty(), "Empty-hand menu click walks to the optional burger job")
+	expect(not game.pending_interaction.is_empty(), "Empty-hand order-terminal click walks to the optional burger job")
 	finish_walk()
-	expect(game.burger_is_open() and shift.status(game)["started"], "Arriving at the menu opens the Monolith Burger popup")
+	expect(game.burger_is_open() and shift.status(game)["started"], "Arriving at the order terminal opens the Monolith Burger popup")
 	expect(shift.status(game)["index"] == 0 and snapshot() == original, "Opening the optional job preserves all main story progress")
 	var order: Dictionary = shift.ORDERS[0]
 	var wrong_id := ""
@@ -118,7 +128,7 @@ func check_open_and_retry() -> void:
 	completed_cases["open_retry"] = true
 
 func check_completion_and_reward() -> void:
-	game.new_game(false)
+	start_restaurant()
 	for item in ["service chit", "keycard", "maintenance pass", "grease"]:
 		game.add_item(item)
 	game.add_item("novelty badge")
@@ -149,15 +159,19 @@ func check_completion_and_reward() -> void:
 	game.choose_burger_option(shift.ORDERS[0]["correct_id"])
 	expect(shift.status(game)["completed"] and game.state["inventory"].count("monolith coupon") == 1, "Repeated completion or reopening cannot farm another coupon")
 	game.close_burger_shift()
+	game.enter_room("diner")
+	act("cook", "Use", "monolith coupon")
+	expect(game.has_item("monolith coupon") and not shift.status(game)["coupon_redeemed"], "Bex directs Roger to Monolith Burger without consuming its coupon")
+	game.enter_room("monolith")
 	await process_frame
 	await click_control(game.inventory_buttons["monolith coupon"])
 	expect(game.selected == "monolith coupon", "The earned coupon can be selected from Roger's pockets")
-	await click(game.get_global_transform_with_canvas() * game.room_hotspots()["cook"]["rect"].get_center())
+	await click(game.get_global_transform_with_canvas() * game.room_hotspots()["manager"]["rect"].get_center())
 	finish_walk()
-	expect(shift.status(game)["coupon_redeemed"] and not game.has_item("monolith coupon"), "Bex accepts and consumes the completed shift's coupon")
+	expect(shift.status(game)["coupon_redeemed"] and not game.has_item("monolith coupon"), "Flipp accepts and consumes the completed shift's coupon")
 	game.close_dialogue()
 	expect(snapshot() == original, "Redeeming the coupon preserves every main puzzle item, story flag, and point")
-	act("cook", "Use", "monolith coupon")
+	act("manager", "Use", "monolith coupon")
 	expect(snapshot() == original and shift.status(game)["coupon_redeemed"], "Repeated coupon redemption cannot consume other items or alter the story")
 	game.open_burger_shift()
 	expect(shift.status(game)["completed"] and not game.has_item("monolith coupon"), "A redeemed completed shift does not award another coupon")
@@ -165,7 +179,7 @@ func check_completion_and_reward() -> void:
 	completed_cases["completion_reward"] = true
 
 func check_reopen_and_save() -> void:
-	game.new_game(false)
+	start_restaurant()
 	game.open_burger_shift()
 	game.choose_burger_option(shift.ORDERS[0]["correct_id"])
 	game.close_burger_shift()
@@ -173,7 +187,7 @@ func check_reopen_and_save() -> void:
 	game.open_burger_shift()
 	expect(game.burger_is_open() and shift.status(game)["index"] == 1, "Reopening resumes with the next customer")
 	expect(game.save_game(), "A partial optional job can be saved")
-	game.new_game(false)
+	start_restaurant()
 	expect(not shift.status(game)["started"], "New Game clears optional burger progress")
 	expect(game.load_game() and not game.burger_is_open() and shift.status(game)["index"] == 1, "Load restores the partial job without reopening a transient popup")
 	game.close_dialogue()
@@ -182,18 +196,18 @@ func check_reopen_and_save() -> void:
 	game.choose_burger_option(shift.ORDERS[2]["correct_id"])
 	game.close_burger_shift()
 	expect(game.save_game(), "Completed coupon progress can be saved")
-	game.new_game(false)
+	start_restaurant()
 	expect(game.load_game() and shift.status(game)["completed"] and game.state["inventory"].count("monolith coupon") == 1, "Loading completion restores exactly one reward")
 	game.close_dialogue()
-	act("cook", "Use", "monolith coupon")
+	act("manager", "Use", "monolith coupon")
 	expect(game.save_game(), "Coupon redemption can be saved")
-	game.new_game(false)
+	start_restaurant()
 	expect(game.load_game() and shift.status(game)["coupon_redeemed"] and not game.has_item("monolith coupon"), "Loading redeemed progress cannot resurrect the coupon")
 	game.close_dialogue()
 	completed_cases["reopen_save"] = true
 
 func check_modal_input() -> void:
-	game.new_game(false)
+	start_restaurant()
 	game.open_burger_shift()
 	var original := snapshot()
 	var burger_before: Dictionary = game.state.get("burger_shift", {}).duplicate(true)
@@ -204,7 +218,7 @@ func check_modal_input() -> void:
 		game._process(1.0 / 60.0)
 	expect(game.player == player_before and int(game.audio.event_counts.get("step_a", 0)) + int(game.audio.event_counts.get("step_b", 0)) == step_count, "The burger popup pauses walking and footsteps")
 	await click(Vector2(10, 300))
-	game.perform_action("cook", "Talk")
+	game.perform_action("manager", "Talk")
 	expect(snapshot() == original and game.state.get("burger_shift", {}) == burger_before and game.pending_interaction.is_empty(), "Popup background clicks and hidden world actions are blocked")
 	await press_key(KEY_ESCAPE)
 	expect(not game.burger_is_open() and shift.status(game)["index"] == 0, "Escape closes the optional job without changing its progress")
@@ -213,7 +227,7 @@ func check_modal_input() -> void:
 	game.open_burger_shift()
 	game.choose_burger_option(shift.ORDERS[0]["correct_id"])
 	expect(game.title_is_open() and not game.burger_is_open() and game.state.get("burger_shift", {}) == burger_before, "Title blocks hidden job opening and order choices")
-	game.new_game(false)
+	start_restaurant()
 	game.toggle_sound_panel()
 	var before_sound: Dictionary = game.state.duplicate(true)
 	game.open_burger_shift()
@@ -253,7 +267,7 @@ func check() -> void:
 	game.queue_free()
 	await create_timer(0.15).timeout
 	if failures == 0:
-		print("PASS: %d burger checks — menu mouse routing, order retries/sequence, single coupon/redemption, reopen/save/load, paused gameplay, modal input" % checks)
+		print("PASS: %d burger checks — restaurant terminal mouse routing, order retries/sequence, single coupon/redemption, reopen/save/load, paused gameplay, modal input" % checks)
 	else:
 		push_error("%d of %d burger checks failed" % [failures, checks])
 	quit(0 if failures == 0 else 1)

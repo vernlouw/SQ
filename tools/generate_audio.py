@@ -4,6 +4,7 @@
 Requires Python 3 and NumPy. All compositions, synth voices and sound effects
 are made here; no recordings, melodies or sound banks from Space Quest are used.
 Run from anywhere: python3 tools/generate_audio.py
+Generate just the Monolith Burger room: python3 tools/generate_audio.py --only-monolith
 """
 
 from pathlib import Path
@@ -201,6 +202,54 @@ def museum():
     return song.audio
 
 
+def monolith():
+    """A bright, original counter-service groove with a little orbital swagger."""
+    song = Song(124, 16)
+    chords = [
+        [50, 54, 57, 61, 64], [47, 50, 54, 57, 61],
+        [52, 55, 59, 62, 66], [45, 49, 55, 59, 66],
+        [54, 57, 61, 64, 68], [47, 51, 57, 61, 66],
+        [52, 55, 59, 62, 66], [45, 49, 55, 59, 64],
+    ]
+    melody = [
+        [(.5, 78), (1.25, 81), (2.5, 76), (3.25, 74)],
+        [(.25, 73), (1, 74), (2.5, 78), (3.5, 81)],
+        [(.5, 79), (1.5, 78), (2.75, 76)],
+        [(.25, 76), (1.25, 73), (2.5, 71), (3.5, 73)],
+        [(.5, 80), (1.25, 81), (2.5, 85), (3.25, 83)],
+        [(.25, 78), (1.5, 75), (2.75, 73)],
+        [(.5, 74), (1.25, 78), (2.5, 79), (3.25, 78)],
+        [(.25, 76), (1.25, 73), (2.5, 69), (3.5, 73)],
+    ]
+    for bar in range(16):
+        b = bar * 4
+        chord = chords[bar % 8]
+        root = chord[0] - 12
+        for offset, pitch, gain in [
+            (0, root, .16), (1, root + 7, .12),
+            (1.75, root + 12, .11), (2.5, root + 7, .13),
+            (3.5, root + (11 if bar % 8 == 7 else 2), .10),
+        ]:
+            song.note(b + offset, pitch, .48, "bass", gain, -.08)
+        for offset, gain in [(.5, .070), (1.5, .048), (2.75, .061)]:
+            for i, pitch in enumerate(chord[1:]):
+                song.note(b + offset + i * .016, pitch, .9, "keys", gain, -.48 + i * .30)
+        for offset, pitch in melody[bar % 8]:
+            song.note(b + offset, pitch, .52 if offset < 3 else .73,
+                      "lead", .077 if bar < 8 else .062, .17)
+        if bar >= 8:
+            song.note(b + 2.125, chord[-1] + 12, 1.12, "bell", .045, -.38)
+        for offset in [0, 2]:
+            song.percussion(b + offset, "kick", .105)
+        for offset in [1, 3]:
+            song.percussion(b + offset, "brush", .068, .23)
+        for step in range(8):
+            song.percussion(b + step * .5, "hat", .041 if step % 2 else .029, -.30)
+        if bar % 4 == 3:
+            song.percussion(b + 3.75, "tap", .030, .34)
+    return song.audio
+
+
 def room_tone(kind):
     # Integer-cycle hum and circularly filtered noise make exact periodic beds.
     duration = 8.0
@@ -209,22 +258,35 @@ def room_tone(kind):
     white = RNG.normal(0, 1, n)
     spectrum = np.fft.rfft(white)
     frequencies = np.fft.rfftfreq(n, 1 / RATE)
-    cutoff = {"diner": 180, "dock": 92, "museum": 240}[kind]
+    cutoff = {"diner": 180, "dock": 92, "museum": 240, "monolith": 210}[kind]
     spectrum *= 1 / (1 + (frequencies / cutoff) ** 6)
     spectrum[0] = 0
     air = np.fft.irfft(spectrum, n=n)
     air /= max(np.sqrt(np.mean(air * air)), 1e-9)
-    base = {"diner": 60, "dock": 48, "museum": 80}[kind]
+    base = {"diner": 60, "dock": 48, "museum": 80, "monolith": 56}[kind]
     hum = .48 * np.sin(TAU * base * t) + .12 * np.sin(TAU * base * 2 * t)
     hum *= .92 + .08 * np.sin(TAU * .25 * t)
     if kind == "diner":
         hum += .08 * np.sin(TAU * 240 * t) * (1 + .2 * np.sin(TAU * .375 * t))
     elif kind == "dock":
         hum += .13 * np.sin(TAU * 24 * t) + .075 * np.sin(TAU * 96 * t)
+    elif kind == "monolith":
+        hum += .075 * np.sin(TAU * 192 * t) * (1 + .25 * np.sin(TAU * .375 * t))
+        hum += .035 * np.sin(TAU * 384 * t)
     else:
         hum += .06 * np.sin(TAU * 320 * t) * (.65 + .35 * np.sin(TAU * .125 * t))
     left = .6 * hum + .22 * air
     right = .6 * hum + .22 * np.roll(air, 1400)
+    if kind == "monolith":
+        # A faint extractor/grill hiss, filtered on a circular eight-second
+        # buffer so it wraps naturally rather than fading in and out.
+        kitchen = np.fft.rfft(white)
+        kitchen *= frequencies ** 2 / (frequencies ** 2 + 700 ** 2)
+        kitchen *= 1 / (1 + (frequencies / 2600) ** 8)
+        kitchen = np.fft.irfft(kitchen, n=n)
+        kitchen /= max(np.sqrt(np.mean(kitchen * kitchen)), 1e-9)
+        left += .045 * kitchen
+        right += .045 * np.roll(kitchen, 920)
     return np.column_stack((left, right))
 
 
@@ -320,15 +382,25 @@ def write_asset(name, data, target_rms, peak_limit):
 
 
 def main():
+    global RNG
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="Print validation as JSON.")
+    parser.add_argument("--only-monolith", action="store_true", help="Write only the new room's music and ambience; preserve all other recordings.")
     args = parser.parse_args()
     reports = []
-    for room, generator in [("diner", diner), ("dock", dock), ("museum", museum)]:
-        reports.append(write_asset("music_" + room, generator(), .09, .45))
-        reports.append(write_asset("ambience_" + room, room_tone(room), .036, .16))
-    for name, sound in effects().items():
-        reports.append(write_asset(name, sound, .10 if name.startswith("step") else .12, .46))
+    if not args.only_monolith:
+        # Preserve the legacy synthesis order and seed for the existing cues.
+        for room, generator in [("diner", diner), ("dock", dock), ("museum", museum)]:
+            reports.append(write_asset("music_" + room, generator(), .09, .45))
+            reports.append(write_asset("ambience_" + room, room_tone(room), .036, .16))
+        for name, sound in effects().items():
+            reports.append(write_asset(name, sound, .10 if name.startswith("step") else .12, .46))
+    # The added room has its own deterministic seed, independent of whether
+    # older assets were generated in the same run. Supplied title cues are
+    # never outputs of this synthesis script.
+    RNG = np.random.default_rng(74220)
+    reports.append(write_asset("music_monolith", monolith(), .09, .45))
+    reports.append(write_asset("ambience_monolith", room_tone("monolith"), .036, .16))
     if args.report:
         print(json.dumps({"rate": RATE, "channels": 2, "format": "PCM16", "assets": reports}, indent=2))
     else:

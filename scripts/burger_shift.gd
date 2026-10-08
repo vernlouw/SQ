@@ -32,7 +32,7 @@ const ORDERS: Array = [
 		],
 		"correct_id": "monolith_counter",
 		"hint": "Roger's Space Quest IV burger-flipping job is at Monolith Burger.",
-		"success": "Monolith Burger pickup confirmed. The traveller tips you in next week's money; Bex refuses to count it until Thursday.",
+		"success": "Monolith Burger pickup confirmed. The traveller tips you in next week's money; Flipp refuses to count it until Thursday.",
 		"wrong": {
 			"starcon_cafeteria": "The academy sends back a tray and three requisition forms. Roger's Space Quest IV burger job was at Monolith Burger.",
 			"eureka_bay": "The loading bay treats the meal as cargo. Send it to Monolith Burger, where Roger flipped burgers in Space Quest IV."
@@ -84,13 +84,13 @@ static func status(game) -> Dictionary:
 	var completed: bool = bool(quest.get("completed", false)) or index >= ORDERS.size()
 	var redeemed: bool = bool(quest.get("coupon_redeemed", false))
 	var order: Dictionary = {} if completed else ORDERS[index]
-	var message := "Bex's menu offers a Monolith Burger relief shift: three peculiar meal tickets, one free lunch. Choose the right garnish, counter, and topping."
+	var message := "Flipp needs relief staff right here at Monolith Burger: three peculiar meal tickets, one free lunch. Choose the right garnish, counter, and topping."
 	if bool(quest.get("started", false)):
-		message = "Three orders, one coupon. Bex is willing to overlook your qualifications; the customers are less charitable."
+		message = "Three orders, one coupon. Flipp is willing to overlook your qualifications; the customers are less charitable."
 	if completed:
-		message = "Your relief shift is finished. Use the COUPON on Bex to claim lunch."
+		message = "Your relief shift is finished. Use the COUPON on Flipp at the Monolith Burger counter to claim lunch."
 	if redeemed:
-		message = "Lunch claimed. Bex has recorded the break as advanced burger inspection."
+		message = "Lunch claimed. Flipp has recorded the break as advanced burger inspection."
 	return {
 		"started": bool(quest.get("started", false)),
 		"index": index,
@@ -143,15 +143,15 @@ static func choose(game, choice_id: String) -> Dictionary:
 		game.add_item(COUPON)
 		quest["coupon_awarded"] = true
 		awarded = true
-	return _reply(game, "Three orders served. Bex awards one meal coupon and the honorary title Assistant to the Acting Relief Burger Technician. Use COUPON on Bex for lunch.", true, awarded)
+	return _reply(game, "Three orders served. Flipp awards one meal coupon and the honorary title Assistant to the Acting Relief Burger Technician. Use COUPON on Flipp at this counter for lunch.", true, awarded)
 
 static func redeem(game) -> Dictionary:
 	var current: Dictionary = _read_state(game)
 	if bool(current.get("coupon_redeemed", false)):
 		return _reply(game, "You've already claimed your lunch. The coupon's generous terms stop just short of infinity.", false)
 	if not bool(current.get("completed", false)) or not game.has_item(COUPON):
-		return _reply(game, "Serve the three relief-shift orders first. Then bring Bex the meal coupon; honorary job titles are not edible.", false)
+		return _reply(game, "Serve the three relief-shift orders first. Then bring Flipp the meal coupon here at Monolith Burger; honorary job titles are not edible.", false)
 	var quest: Dictionary = _state(game)
 	game.remove_item(COUPON)
 	quest["coupon_redeemed"] = true
-	return _reply(game, "One burger, as promised. I'm stamping your break as 'advanced burger inspection' so payroll won't panic. Yes, the bun is included. I'm a cook, not Intergalactic Finance.", true)
+	return _reply(game, "One burger, as promised. I'm logging your break as 'advanced burger inspection' so payroll won't panic. Yes, the bun is included. I'm a grill manager, not Intergalactic Finance.", true)

@@ -69,8 +69,8 @@ func loop_channels_playing(room_id: String) -> void:
 	expect(loop_players == 2, room_id + " has exactly one music and one ambience player without overlapping old room loops")
 
 func check_assets() -> void:
-	var expected_assets := 19 + int(game.audio.streams.has("intro_theme")) + int(game.audio.streams.has("intro_fanfare"))
-	expect(game.audio.streams.size() == expected_assets, "All six room loops and thirteen original effects load, plus supplied title cues")
+	var expected_assets := 21 + int(game.audio.streams.has("intro_theme")) + int(game.audio.streams.has("intro_fanfare"))
+	expect(game.audio.streams.size() == expected_assets, "All eight room loops and thirteen original effects load, plus supplied title cues")
 	for stream_name in game.audio.streams:
 		var stream = game.audio.streams[stream_name]
 		if stream is AudioStreamOggVorbis:
@@ -184,6 +184,8 @@ func check_puzzle_events() -> void:
 	expect(count_event("terminal") == terminals + 3, "Programming the courier plays one terminal cue")
 	var completion := count_event("complete")
 	act("shuttle")
+	game.choose_destination("labion")
+	game.finish_flight()
 	expect(game.flag("complete") and count_event("complete") == completion + 1, "Completing the actual chapter plays one ending cue")
 	act("shuttle")
 	expect(count_event("complete") == completion + 1, "Completed chapter cannot replay the ending cue")
@@ -476,6 +478,10 @@ func check() -> void:
 	loop_channels_playing("dock")
 	game.enter_room("museum")
 	loop_channels_playing("museum")
+	game.enter_room("monolith")
+	loop_channels_playing("monolith")
+	expect(await mixed_energy() > 0.000001, "Monolith Burger room music and ambience produce nonzero mixed PCM")
+	game.enter_room("museum")
 	var room_starts := int(game.audio.room_start_counts.get("museum", 0))
 	game.audio.set_room("museum")
 	expect(int(game.audio.room_start_counts.get("museum", 0)) == room_starts, "Reapplying the same room does not restart its music or ambience")

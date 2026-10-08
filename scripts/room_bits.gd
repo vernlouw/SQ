@@ -5,7 +5,7 @@ extends RefCounted
 const HOTSPOTS := {
 	"diner": {
 		"bit_coffee": {"rect": Rect2(239, 117, 35, 44), "at": Vector2(244, 278), "name": "Coffee dispenser", "use_label": "Brew"},
-		"bit_menu": {"rect": Rect2(75, 170, 24, 28), "at": Vector2(112, 275), "name": "Booth menu / burger relief shift", "use_label": "Relief shift"},
+		"bit_menu": {"rect": Rect2(75, 170, 24, 28), "at": Vector2(112, 275), "name": "Booth menu / Monolith Burger advert", "use_label": "Read advert"},
 		"bit_seat": {"rect": Rect2(88, 207, 78, 34), "at": Vector2(132, 276), "name": "Sticky booth seat", "use_label": "Sit"},
 		"bit_plant": {"rect": Rect2(183, 126, 34, 43), "at": Vector2(206, 274), "name": "Window plant", "use_label": "Rotate"},
 		"bit_sauce": {"rect": Rect2(34, 173, 17, 28), "at": Vector2(64, 277), "name": "Rocket sauce", "use_label": "Shake"}
@@ -23,6 +23,12 @@ const HOTSPOTS := {
 		"bit_donor": {"rect": Rect2(268, 136, 26, 30), "at": Vector2(273, 277), "name": "Donor plaque", "use_label": "Request tour"},
 		"bit_model": {"rect": Rect2(298, 27, 191, 44), "at": Vector2(382, 278), "name": "Suspended starship model", "use_label": "Run demo"},
 		"bit_badge_tray": {"rect": Rect2(270, 176, 20, 22), "at": Vector2(276, 279), "name": "Souvenir badge stand", "use_label": "Pick up"}
+	},
+	"monolith": {
+		"bit_monolith_mascot": {"rect": Rect2(186, 109, 62, 98), "at": Vector2(232, 278), "name": "Burger mascot", "use_label": "Press"},
+		"bit_monolith_booth": {"rect": Rect2(27, 160, 37, 28), "at": Vector2(80, 278), "name": "Booth holomenu", "use_label": "Zoom menu"},
+		"bit_monolith_mustard": {"rect": Rect2(498, 122, 42, 63), "at": Vector2(508, 278), "name": "Mustard duck", "use_label": "Pump"},
+		"bit_monolith_window": {"rect": Rect2(36, 39, 115, 99), "at": Vector2(148, 277), "name": "Restaurant window", "use_label": "Admire"}
 	}
 }
 
@@ -41,7 +47,11 @@ const LOOK_LINES := {
 	"bit_schematic": "The first self-wringing mop. Its inventor received a medal. The person who cleaned up the prototype did not.",
 	"bit_donor": "A gold plaque thanks the patrons who made this museum possible. The cleaning crew gets a laminated rota.",
 	"bit_model": "A suspended starship with immaculate hull plating. Whoever cleans it has a very expensive ladder.",
-	"bit_badge_tray": "One complimentary VISITOR OF THE MINUTE badge. A career milestone with a refreshingly short probation period."
+	"bit_badge_tray": "One complimentary VISITOR OF THE MINUTE badge. A career milestone with a refreshingly short probation period.",
+	"bit_monolith_mascot": "The mascot has a permanent smile, a permanent hat, and apparently no scheduled breaks. Corporate's ideal employee.",
+	"bit_monolith_booth": "The burger photographs are larger than the plates. The small print explains that serving size is measured in optimism.",
+	"bit_monolith_mustard": "A duck-shaped mustard pump. Somebody successfully billed a condiment dispenser as an employee morale initiative.",
+	"bit_monolith_window": "A ship floats beyond the glass. Somewhere aboard it, another janitor is also looking longingly at somebody else's lunch break."
 }
 
 const ITEM_LINES := {
@@ -59,11 +69,15 @@ const ITEM_LINES := {
 	"bit_schematic": "You are not applying the %s to a museum blueprint. Your performance review cannot survive another historical incident.",
 	"bit_donor": "The plaque accepts major donations, not the %s. You cannot afford even the minor plaque.",
 	"bit_model": "You keep the %s. The exhibit's repair estimate has more zeroes than your bank account.",
-	"bit_badge_tray": "The souvenir is free. You can keep the %s and your remaining dignity."
+	"bit_badge_tray": "The souvenir is free. You can keep the %s and your remaining dignity.",
+	"bit_monolith_mascot": "You keep the %s. The mascot already has everything it needs, including a better uniform than yours.",
+	"bit_monolith_booth": "The menu declines your %s. Condiments are extra, but inventory disposal isn't a service it offers.",
+	"bit_monolith_mustard": "You keep the %s away from the duck. The mustard is already doing everything legally permitted to mustard.",
+	"bit_monolith_window": "You keep the %s. Even a galactic emergency doesn't justify cleaning a window with your entire inventory."
 }
 
 static func default_action(id: String) -> String:
-	return "Look" if id == "bit_planet" else "Use"
+	return "Look" if id in ["bit_planet", "bit_monolith_window"] else "Use"
 
 static func visible(_game, _id: String) -> bool:
 	# The empty souvenir stand remains inspectable after its one badge is taken.
@@ -94,7 +108,7 @@ static func _say(game, text: String, cue: String = "", speaker: String = "roger"
 	game.show_dialog(speaker, [text])
 
 static func _badge_reaction(game, id: String) -> bool:
-	if id not in ["cook", "guard", "guardian"] or not game.has_item("novelty badge"):
+	if id not in ["cook", "guard", "guardian", "manager"] or not game.has_item("novelty badge"):
 		return false
 	var count: int = _count(_bits(game), "badge:" + id)
 	match id:
@@ -104,10 +118,12 @@ static func _badge_reaction(game, id: String) -> bool:
 			_say(game, "Decorative credentials noted. I'm afraid novelty authority is restricted to novelty emergencies." if count == 1 else "Your minute has expired. Luckily, souvenir status renews automatically. Dock clearance does not.", "dialogue", "guard")
 		"guardian":
 			_say(game, "VISITOR STATUS CONFIRMED. Badge confers one hundred percent more souvenir ownership and zero additional archive access." if count == 1 else "BADGE STILL VALID AS A BADGE. Please refrain from attempting to promote it into a maintenance pass.", "terminal", "guardian")
+		"manager":
+			_say(game, "Visitor of the Minute? Excellent. Our training takes two minutes. We'll make a burger professional of you before that badge cools." if count == 1 else "The badge is still adorable. It still won't pay for fries. Corporate's poetry policy is brutally clear.", "terminal", "manager")
 	return true
 
 static func handle(game, room: String, id: String, action: String, item: String) -> bool:
-	if action == "Use" and item == "novelty badge" and id in ["cook", "guard", "guardian"]:
+	if action == "Use" and item == "novelty badge" and id in ["cook", "guard", "guardian", "manager"]:
 		return _badge_reaction(game, id)
 	if not HOTSPOTS.has(room) or not HOTSPOTS[room].has(id):
 		return false
@@ -139,7 +155,7 @@ static func handle(game, room: String, id: String, action: String, item: String)
 			var choices: Array = ["Decaf. Hot brown water, for when disappointment needs to be portable.", "Awake. The machine brews a cup and prints an invoice for the steam.", "Cleaning Solvent. It smells like coffee that has access to military funding."]
 			_say(game, choices[bits["coffee_strength"]], "terminal")
 		"bit_menu":
-			game.open_burger_shift()
+			_say(game, "An advert for Monolith Burger: 'Our burgers are worth crossing a sector for.' The fine print excludes fuel costs. Take the dock shuttle and select Monolith Burger." if count % 2 else "Monolith Burger is hiring relief staff. 'Previous fast-food trauma preferred.' Its actual restaurant is a shuttle ride away; select Monolith Burger from the service dock.", "ui_click")
 		"bit_seat":
 			_say(game, "You peel yourself free with a noise the kitchen tactfully pretends not to hear. Good staff retention, terrible upholstery." if _toggle(bits, "seat_unstuck") else "You sit again. The seat remembers you fondly, and is reluctant to resume a long-distance relationship.", "door")
 		"bit_plant":
@@ -176,4 +192,14 @@ static func handle(game, room: String, id: String, action: String, item: String)
 				_say(game, "You pin on VISITOR OF THE MINUTE. At last, recognition that requires absolutely no extra shifts.")
 			else:
 				_say(game, "One complimentary badge per visitor. You already have enough duplicate Rogers in your life.", "blocked")
+		"bit_monolith_mascot":
+			_say(game, "You press the mascot's shoe. 'A career with us is an uplifting experience!' Its hydraulics lift it two centimetres." if _toggle(bits, "monolith_mascot_cheering") else "The mascot offers free refills on enthusiasm. A small label confirms that all enthusiasm is artificial.", "terminal")
+		"bit_monolith_booth":
+			_say(game, "You zoom into the burger photograph. One glistening pickle now occupies the entire menu. This is how hunger becomes marketing." if _toggle(bits, "monolith_menu_zoomed") else "You restore the menu to normal size. The advertised burger loses seven storeys and gains a disclaimer.", "ui_click")
+		"bit_monolith_mustard":
+			bits["monolith_mustard_pumps"] = int(bits.get("monolith_mustard_pumps", 0)) + 1
+			_say(game, "You pump the duck. It dispenses mustard with the wounded dignity of an underpaid mascot." if count % 2 else "Another pump. The duck appears to be considering a career outside the condiment sector.", "combine")
+		"bit_monolith_window":
+			bits["monolith_window_waved"] = true
+			_say(game, "You wave at the ship. A landing light blinks back. Finally, a customer acknowledges the cleaning staff." if count % 2 else "You wave again. The pilot has apparently exhausted this week's employee-recognition budget.")
 	return true
