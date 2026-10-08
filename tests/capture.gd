@@ -12,6 +12,8 @@ func capture() -> void:
 	var room_id := "diner"
 	var output := ""
 	var portrait := false
+	var title := false
+	var sound := false
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--room="):
 			room_id = argument.trim_prefix("--room=")
@@ -19,19 +21,28 @@ func capture() -> void:
 			output = argument.trim_prefix("--output=")
 		elif argument == "--portrait":
 			portrait = true
+		elif argument == "--title":
+			title = true
+		elif argument == "--sound":
+			sound = true
 	if room_id not in ["diner", "dock", "museum"]:
 		push_error("Unknown room: " + room_id)
 		quit(1)
 		return
 	if output.is_empty():
-		output = "user://capture_" + room_id + ".png"
+		output = "user://capture_" + ("title" if title else room_id) + ".png"
 	var game = load("res://main.tscn").instantiate()
 	root.add_child(game)
 	await process_frame
-	game.new_game(false)
-	game.enter_room(room_id)
-	if portrait:
+	if title:
+		game.show_title()
+	else:
+		game.new_game(false)
+		game.enter_room(room_id)
+	if portrait and not title:
 		game.perform_action("cook" if room_id == "diner" else "guard" if room_id == "dock" else "guardian", "Talk")
+	if sound:
+		game.toggle_sound_panel()
 	# Allow the imported textures and Control layout to reach the render server.
 	await process_frame
 	await process_frame

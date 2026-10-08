@@ -81,6 +81,13 @@ var sound_shade: ColorRect
 var sound_sliders: Dictionary = {}
 var sound_mute: CheckButton
 var sound_button: Button
+var title_panel: Panel
+var title_shade: ColorRect
+var title_new_button: Button
+var title_continue_button: Button
+var title_sound_button: Button
+var title_status: Label
+var title_buttons: Dictionary = {}
 
 func _ready() -> void:
 	audio = AdventureAudio.new()
@@ -91,7 +98,8 @@ func _ready() -> void:
 		if ResourceLoader.exists(path):
 			textures[name] = load(path)
 	_build_ui()
-	new_game()
+	new_game(false)
+	show_title()
 
 func _panel_style(fill: Color, border: Color = Color("47667b"), radius: int = 5) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -118,7 +126,9 @@ func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Ca
 	button.add_theme_stylebox_override("pressed", _panel_style(Color("315972"), Color("dbb671")))
 	button.focus_mode = Control.FOCUS_NONE
 	button.pressed.connect(func():
-		if sound_is_open() and parent == hud:
+		if sound_is_open() and parent != sound_panel:
+			return
+		if title_is_open() and parent == hud:
 			return
 		audio.play_sfx("ui_click")
 		callback.call())
@@ -198,7 +208,103 @@ func _build_ui() -> void:
 	sound_button.add_theme_font_size_override("font_size", 9)
 	sound_button.size = Vector2(50, 22)
 	sound_button.tooltip_text = "Music, effects and ambience — M"
+	_build_title_panel()
 	_build_sound_panel()
+
+func _build_title_panel() -> void:
+	title_shade = ColorRect.new()
+	title_shade.size = Vector2(640, 400)
+	title_shade.color = Color("08141f")
+	title_shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	hud.add_child(title_shade)
+	title_panel = Panel.new()
+	title_panel.size = Vector2(640, 400)
+	title_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	title_panel.add_theme_stylebox_override("panel", _panel_style(Color("08141f"), Color("08141f"), 0))
+	title_shade.add_child(title_panel)
+	if textures.has("room_dock"):
+		var background := TextureRect.new()
+		background.texture = textures["room_dock"]
+		background.size = Vector2(640, 400)
+		background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		title_panel.add_child(background)
+	var veil := ColorRect.new()
+	veil.size = Vector2(640, 400)
+	veil.color = Color(0.015, 0.045, 0.08, 0.65)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_panel.add_child(veil)
+	_label("A POINT & CLICK SPACE ADVENTURE", Vector2(44, 49), Vector2(552, 21), 11, title_panel).add_theme_color_override("font_color", Color("b1c7d5"))
+	_label("SPACE QUEST VII", Vector2(40, 91), Vector2(556, 64), 44, title_panel).add_theme_color_override("font_color", Color("f4d49a"))
+	_label("Mopocalypse Now", Vector2(44, 151), Vector2(552, 42), 28, title_panel)
+	_label("CHAPTER ONE: THE MOP JOB", Vector2(46, 207), Vector2(550, 24), 13, title_panel).add_theme_color_override("font_color", Color("e7bb7c"))
+	title_new_button = _button("New Game", Vector2(44, 276), Vector2(174, 39), func(): start_adventure(), title_panel)
+	title_continue_button = _button("Continue", Vector2(230, 276), Vector2(174, 39), func(): start_adventure(true), title_panel)
+	title_sound_button = _button("Sound", Vector2(416, 276), Vector2(136, 39), toggle_sound_panel, title_panel)
+	for button in [title_new_button, title_continue_button, title_sound_button]:
+		button.add_theme_font_size_override("font_size", 15)
+	title_buttons = {"new": title_new_button, "continue": title_continue_button, "sound": title_sound_button}
+	title_status = _label("Enter or Esc starts a new game • Music is skippable", Vector2(46, 331), Vector2(550, 22), 11, title_panel)
+	title_status.size.y = 45
+	title_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title_status.add_theme_color_override("font_color", Color("b1c7d5"))
+	title_panel.hide()
+	title_shade.hide()
+
+func title_is_open() -> bool:
+	return is_instance_valid(title_panel) and title_panel.visible
+
+func title_visible() -> bool:
+	return title_is_open()
+
+func checkpoint_available() -> bool:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return false
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if file == null:
+		return false
+	var snapshot: Variant = JSON.parse_string(file.get_as_text())
+	if not snapshot is Dictionary or not ROOM_NAMES.has(snapshot.get("room", "")) or not snapshot.get("inventory", null) is Array or not snapshot.get("flags", null) is Dictionary:
+		return false
+	var saved_position: Variant = snapshot.get("player", [170.0, 280.0])
+	return saved_position is Array and saved_position.size() == 2 and (saved_position[0] is float or saved_position[0] is int) and (saved_position[1] is float or saved_position[1] is int)
+
+func show_title() -> void:
+	title_continue_button.disabled = not checkpoint_available()
+	title_continue_button.tooltip_text = "Resume your checkpoint" if not title_continue_button.disabled else "Save a checkpoint during play to enable Continue"
+	title_status.text = "Enter or Esc starts a new game • Music is skippable"
+	if title_is_open():
+		return
+	pending_interaction.clear()
+	destination = player
+	audio.update_footsteps(0.0, false)
+	hovered = ""
+	title_shade.show()
+	title_panel.show()
+	audio.start_title_music()
+	queue_redraw()
+
+func _hide_title() -> void:
+	if is_instance_valid(title_panel):
+		title_panel.hide()
+		title_shade.hide()
+
+func start_adventure(continue_saved: bool = false) -> bool:
+	if sound_is_open():
+		return false
+	if continue_saved:
+		if not load_game():
+			title_status.text = message + " Choose New Game to start again."
+			return false
+		_hide_title()
+	else:
+		new_game(true)
+	queue_redraw()
+	return true
+
+func start_from_title(load_checkpoint: bool = false) -> bool:
+	return start_adventure(load_checkpoint)
 
 func _build_sound_panel() -> void:
 	sound_shade = ColorRect.new()
@@ -268,9 +374,14 @@ func _input(event: InputEvent) -> void:
 	if sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ESCAPE, KEY_M]:
 		close_sound_panel()
 		get_viewport().set_input_as_handled()
+	elif title_is_open() and not sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE]:
+		audio.play_sfx("ui_click")
+		start_adventure()
+		get_viewport().set_input_as_handled()
 
 func new_game(show_intro: bool = true) -> void:
 	close_sound_panel()
+	_hide_title()
 	intro_dialogue_active = false
 	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
 	player = Vector2(173, 280)
@@ -284,8 +395,7 @@ func new_game(show_intro: bool = true) -> void:
 	audio.set_room("diner", true)
 	say("A stolen relic. A suspicious clone. First: get out of the diner.")
 	if show_intro:
-		audio.play_intro()
-		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."], true)
+		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."])
 	update_hud()
 	queue_redraw()
 
@@ -324,7 +434,7 @@ func remove_item(item: String) -> void:
 		selected = ""
 
 func set_verb(action: String) -> void:
-	if dialogue_panel.visible or sound_is_open():
+	if dialogue_panel.visible or sound_is_open() or title_is_open():
 		return
 	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
@@ -402,7 +512,7 @@ func update_hud() -> void:
 	queue_redraw()
 
 func select_item(item: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or not has_item(item):
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or not has_item(item):
 		return
 	if selected != "" and selected != item:
 		if combine_items(selected, item):
@@ -434,7 +544,7 @@ func combine_items(first: String, second: String) -> bool:
 func _process(delta: float) -> void:
 	elapsed += delta
 	var moving := player.distance_to(destination) > 1.0
-	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not flag("complete")
+	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not flag("complete")
 	if walking:
 		var old_position := player
 		facing_right = destination.x >= player.x
@@ -447,12 +557,16 @@ func _process(delta: float) -> void:
 	else:
 		audio.update_footsteps(0.0, false)
 	var mouse := get_global_mouse_position()
-	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() else ""
+	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() else ""
 	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if sound_is_open():
+		return
+	if title_is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
+			toggle_sound_panel()
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_SPACE or event.keycode == KEY_ENTER:
@@ -498,7 +612,7 @@ func hotspot_at(point: Vector2) -> String:
 	return ""
 
 func route_click(point: Vector2) -> void:
-	if sound_is_open():
+	if sound_is_open() or title_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -514,7 +628,7 @@ func route_click(point: Vector2) -> void:
 	queue_world_action(id, action, selected)
 
 func route_right_click(point: Vector2) -> void:
-	if sound_is_open():
+	if sound_is_open() or title_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -571,7 +685,7 @@ func interact(id: String) -> void:
 	perform_action(id, "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
-	if state.is_empty() or flag("complete") or sound_is_open():
+	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open():
 		return
 	if item == "" and action in ["Use", "Interact"]:
 		item = selected
@@ -778,7 +892,7 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	update_hud()
 
 func give_hint() -> void:
-	if sound_is_open():
+	if sound_is_open() or title_is_open():
 		return
 	var hint := "The courier is ready. Click the shuttle in the dock to board."
 	if not flag("cook_help"):
@@ -956,7 +1070,7 @@ func draw_ellipse(rect: Rect2, color: Color) -> void:
 	draw_colored_polygon(points, color)
 
 func _draw_player() -> void:
-	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not flag("complete")
+	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not flag("complete")
 	var bob := sin(elapsed * 11) * 1.2 if moving else sin(elapsed * 1.7) * 0.3
 	var perspective_height := lerpf(105.0, 140.0, clampf((player.y - 257.0) / 49.0, 0.0, 1.0))
 	draw_ellipse(Rect2(player.x - 22, player.y - 4, 45, 10), Color(0.01, 0.015, 0.025, 0.45))

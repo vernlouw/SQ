@@ -20,12 +20,16 @@ var ambience_player: AudioStreamPlayer
 var effect_players: Array[AudioStreamPlayer] = []
 var current_room := ""
 var intro_active := false
+var intro_queue: Array[String] = []
+var intro_stage := ""
+var title_mode := false
 var event_counts: Dictionary = {}
 var event_log: Array[String] = []
 var room_start_counts: Dictionary = {}
 var _next_effect := 0
 var _step_clock := 0.0
 var _left_step := true
+var _intro_resume_room_music := true
 
 func _ready() -> void:
 	for channel in CHANNEL_BUSES:
@@ -132,8 +136,9 @@ func reload_assets() -> void:
 	for room in ROOMS:
 		names.append("music_" + room)
 		names.append("ambience_" + room)
-	# Optional: absence retains the existing room score. No substitute recording
-	# or external download is supplied by this controller.
+	# Supplied introduction recordings are optional. Local custom cues can
+	# override them; this loader never downloads recordings.
+	names.append("intro_fanfare")
 	names.append("intro_theme")
 	for id in names:
 		var stream: AudioStream
@@ -145,8 +150,14 @@ func reload_assets() -> void:
 				path = custom_path
 				break
 		if stream == null:
-			path = "res://assets/audio/" + id + ".wav"
-			stream = _load_stream(path)
+			# Supplied introduction recordings may be OGG; the original room
+			# soundtrack and effects remain their existing WAV resources.
+			var extensions := ["ogg", "wav"] if id in ["intro_fanfare", "intro_theme"] else ["wav"]
+			for extension in extensions:
+				path = "res://assets/audio/" + id + "." + extension
+				stream = _load_stream(path)
+				if stream != null:
+					break
 		if stream != null:
 			streams[id] = stream
 			source_paths[id] = path
@@ -177,49 +188,98 @@ func _start_room_music() -> void:
 		music_player.play()
 		_record_event(id)
 
-func play_intro() -> bool:
-	if not streams.has("intro_theme") or current_room == "":
+func _start_room_ambience() -> void:
+	var id := "ambience_" + current_room
+	ambience_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
+	if ambience_player.stream != null:
+		ambience_player.play()
+		_record_event(id)
+
+func play_intro(resume_room_music: bool = true) -> bool:
+	if current_room == "":
 		return false
 	if intro_active:
 		return true
+	intro_queue.clear()
+	for id in ["intro_fanfare", "intro_theme"]:
+		if streams.has(id):
+			intro_queue.append(id)
+	if intro_queue.is_empty():
+		return false
+	_intro_resume_room_music = resume_room_music
 	# Reuse the music player so the introduction and room score never overlap.
 	music_player.stop()
-	music_player.stream = _one_shot_stream(streams["intro_theme"])
 	intro_active = true
-	music_player.play()
-	_record_event("intro_theme")
+	_play_next_intro()
 	return true
 
-func finish_intro() -> void:
-	if not intro_active:
+func _play_next_intro() -> void:
+	while not intro_queue.is_empty() and not streams.has(intro_queue[0]):
+		intro_queue.pop_front()
+	if intro_queue.is_empty():
+		intro_active = false
+		intro_stage = ""
+		music_player.stop()
+		music_player.stream = null
+		if _intro_resume_room_music:
+			_start_room_music()
 		return
+	intro_stage = intro_queue.pop_front()
+	music_player.stream = _one_shot_stream(streams[intro_stage])
+	music_player.play()
+	_record_event(intro_stage)
+
+func start_title_music() -> bool:
+	# Room ambience stays silent on the title, including after the recordings
+	# finish naturally. Starting play restores both room channels.
+	_clear_intro()
+	title_mode = true
+	music_player.stop()
+	music_player.stream = null
+	ambience_player.stop()
+	return play_intro(false)
+
+func stop_title_music() -> void:
+	finish_intro()
+
+func _clear_intro() -> void:
 	intro_active = false
+	intro_queue.clear()
+	intro_stage = ""
+
+func finish_intro() -> void:
+	if not intro_active and intro_stage == "" and not title_mode:
+		return
+	title_mode = false
+	_clear_intro()
 	music_player.stop()
 	_start_room_music()
+	if not ambience_player.playing:
+		_start_room_ambience()
 
 func _on_music_finished() -> void:
 	if intro_active:
-		finish_intro()
+		_play_next_intro()
 
 func set_room(room: String, restart: bool = false) -> void:
 	if not ROOMS.has(room):
 		return
 	if room == current_room and not restart:
 		finish_intro()
+		# A title sequence which ended naturally leaves its music player idle.
+		if music_player.stream == null:
+			_start_room_music()
 		return
 	# Stop before assigning the next room: returning to a room never stacks loops.
-	intro_active = false
+	title_mode = false
+	_clear_intro()
 	music_player.stop()
 	ambience_player.stop()
 	current_room = room
 	_step_clock = 0.0
 	room_start_counts[room] = int(room_start_counts.get(room, 0)) + 1
 	_start_room_music()
-	var id := "ambience_" + room
-	ambience_player.stream = _loop_stream(streams[id]) if streams.has(id) else null
-	if ambience_player.stream != null:
-		ambience_player.play()
-		_record_event(id)
+	_start_room_ambience()
 
 func _record_event(id: String) -> void:
 	event_counts[id] = int(event_counts.get(id, 0)) + 1

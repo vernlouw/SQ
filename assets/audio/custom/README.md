@@ -1,8 +1,9 @@
 # Optional local audio
 
-The bundled music and effects are original sounds created for this project,
+The bundled room music and effects are original sounds created for this project,
 inspired by the retro synthesizer feel of science-fiction adventure games.
-They are **not actual Space Quest V recordings**.
+The separate title cues use user-supplied SQ5 and SQ6 recordings with a light
+loudness and EQ remaster. The full recordings are preserved.
 
 To replace a sound in your own copy, place a `.wav` or `.ogg` file here using
 one of the names below. Restart the game after adding or replacing files.
@@ -13,7 +14,7 @@ the bundled original sound. Use ordinary PCM WAV or Ogg Vorbis audio.
 | --- | --- |
 | Room music | `music_diner`, `music_dock`, `music_museum` |
 | Room ambience | `ambience_diner`, `ambience_dock`, `ambience_museum` |
-| Optional opening cue | `intro_theme` |
+| Title recordings | `intro_fanfare`, `intro_theme` |
 | Interface | `ui_click`, `dialogue`, `save`, `load` |
 | Interaction | `pickup`, `door`, `terminal`, `combine`, `success`, `blocked` |
 | Movement and ending | `step_a`, `step_b`, `complete` |
@@ -23,12 +24,12 @@ Room music and ambience repeat from start to end, so seamless loops work best.
 Effects play once. The `dialogue` sound is a short, quiet text-advance cue;
 it is not a voice-over track.
 
-`intro_theme.ogg` or `intro_theme.wav` is optional and currently not included.
-When provided, it plays once over the opening dialogue and uses the Music
-volume slider. Natural completion, dismissing the last opening line, or
-pressing Esc returns to the diner score. Entering a room or loading a checkpoint
-also stops the intro. Without this file, the normal diner music plays immediately.
-The specific requested intro tune has not been added to this download yet.
+`intro_fanfare` plays the supplied SQ5 fanfare, then `intro_theme` plays the
+full supplied SQ6 intro recording. Both are one-shot cues on the Music volume channel.
+New Game, Continue, Enter, or Esc skips the remaining sequence and starts the
+room score. Completing both recordings naturally leaves the title menu open.
+Missing cues are skipped; a title with no recordings remains playable.
+Matching local OGG/WAV files here override the bundled title cues.
 
 Game archives such as `RESOURCE.MAP` and `RESOURCE.000`, and emulator DLLs,
 are not audio files that this folder can play. This mechanism accepts audio
