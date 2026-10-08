@@ -40,14 +40,14 @@ There is one local save slot, stored in Godot's per-user application data direct
 
 ## Development and verification
 
-The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **79 passing integration checks**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
+The project targets Godot **4.4.1** with its Compatibility renderer. Validation on Linux includes a clean project import, **88 passing integration checks**, and visually inspected graphical captures of all three rooms and portrait dialogue. Run these from the project folder, substituting the path to your Godot executable:
 
 ```sh
 /path/to/Godot --headless --editor --path . --quit
 /path/to/Godot --headless --path . --script tests/smoke.gd
 ```
 
-Use a separate `XDG_DATA_HOME` directory when running the smoke test on Linux; it exercises the game's save slot. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. Input checks send real mouse and keyboard events through the interface and world hotspots.
+Use a separate `XDG_DATA_HOME` directory when running the smoke test on Linux; it exercises the game's save slot. The test checks automatic floor movement and object actions, optional verbs, inspection and cancellation, blocked pickups, item combinations and consumption, all three rooms, the ending, and saving/loading/resetting progress. It also checks compatibility with earlier saves that granted the mop directly from the locker. Input checks send real mouse and keyboard events through the interface and world hotspots.
 
 `tests/capture.gd` is an optional screenshot helper and requires a graphical display:
 
