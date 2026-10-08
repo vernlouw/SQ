@@ -1,0 +1,229 @@
+name: Windows game download
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      XDG_CACHE_HOME: ${{ runner.temp }}/sq-cache
+      XDG_DATA_HOME: ${{ runner.temp }}/sq-data
+      XDG_CONFIG_HOME: ${{ runner.temp }}/sq-config
+    steps:
+      - name: Check out game source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install verified Godot 4.4.1 and Windows templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/godot" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
+          cd "$RUNNER_TEMP/godot"
+          release="https://github.com/godotengine/godot/releases/download/4.4.1-stable"
+          curl --fail --show-error --silent --location --retry 3 "$release/Godot_v4.4.1-stable_linux.x86_64.zip" -o Godot_v4.4.1-stable_linux.x86_64.zip
+          curl --fail --show-error --silent --location --retry 3 "$release/Godot_v4.4.1-stable_export_templates.tpz" -o Godot_v4.4.1-stable_export_templates.tpz
+          cat > SHA512-verified.txt <<'SUMS'
+          ef4e76880a514257175544952c61191106fdef3095b909bafed9fcbeb230c3e5533920a0f3012882dd4bbde83028a67549825794e2d2c3cf76eba7918b71370e  Godot_v4.4.1-stable_linux.x86_64.zip
+          8f461c7d6e91a0fbabfc95b1e4ca70ff1732c6f2920956a16b086ec2a85b5f7e238baf4dbce60dcc5630fae3bcb9a1fa2ae2027b92cb495c02d082705715e441  Godot_v4.4.1-stable_export_templates.tpz
+          SUMS
+          sha512sum --check --strict SHA512-verified.txt
+          unzip -q Godot_v4.4.1-stable_linux.x86_64.zip
+          chmod +x Godot_v4.4.1-stable_linux.x86_64
+          templates="$XDG_DATA_HOME/godot/export_templates/4.4.1.stable"
+          mkdir -p "$templates"
+          unzip -j -q Godot_v4.4.1-stable_export_templates.tpz templates/version.txt templates/windows_release_x86_64.exe templates/windows_debug_x86_64.exe -d "$templates"
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v4.4.1-stable_linux.x86_64" >> "$GITHUB_ENV"
+
+      - name: Import and verify the chapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --path "$GITHUB_WORKSPACE" --import
+          for suite in tests/smoke.gd tests/audio_smoke.gd tests/room_bits_smoke.gd tests/burger_shift_smoke.gd; do
+            suite_name="$(basename "$suite" .gd)"
+            mkdir -p "$RUNNER_TEMP/test-data/$suite_name" "$RUNNER_TEMP/test-config/$suite_name"
+            log="$RUNNER_TEMP/$suite_name.log"
+            if [ "$suite_name" = burger_shift_smoke ]; then
+              if ! command -v xvfb-run >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y xvfb libgl1-mesa-dri
+              fi
+              xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 XDG_DATA_HOME="$RUNNER_TEMP/test-data/$suite_name" XDG_CONFIG_HOME="$RUNNER_TEMP/test-config/$suite_name" timeout 120s "$GODOT" --audio-driver Dummy --path "$GITHUB_WORKSPACE" --script "$suite" 2>&1 | tee "$log"
+            else
+              env XDG_DATA_HOME="$RUNNER_TEMP/test-data/$suite_name" XDG_CONFIG_HOME="$RUNNER_TEMP/test-config/$suite_name" timeout 120s "$GODOT" --headless --audio-driver Dummy --path "$GITHUB_WORKSPACE" --script "$suite" 2>&1 | tee "$log"
+            fi
+            if grep -Eq 'SCRIPT ERROR|ERROR:' "$log"; then exit 1; fi
+            grep -q 'PASS:' "$log"
+          done
+
+      - name: Export one Windows executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p exports/windows
+          "$GODOT" --headless --path "$GITHUB_WORKSPACE" --export-release "Windows Desktop" "$GITHUB_WORKSPACE/exports/windows/SpaceQuestVII.exe" 2>&1 | tee "$RUNNER_TEMP/export.log"
+          if grep -Eq 'SCRIPT ERROR|ERROR:' "$RUNNER_TEMP/export.log"; then exit 1; fi
+
+      - name: Verify the embedded game pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/empty-project" "$RUNNER_TEMP/packed-data"
+          cat > "$RUNNER_TEMP/packed-smoke.gd" <<'GDSCRIPT'
+          extends SceneTree
+          func _initialize() -> void:
+              call_deferred("check_pack")
+          func check_pack() -> void:
+              var scene = load("res://main.tscn")
+              assert(scene is PackedScene)
+              var game = scene.instantiate()
+              root.add_child(game)
+              await process_frame
+              assert(game.title_is_open())
+              assert(game.audio.streams.size() == 21)
+              assert(game.audio.streams["intro_fanfare"].get_length() > 18.0)
+              assert(game.audio.streams["intro_theme"].get_length() > 330.0)
+              for room_id in ["diner", "dock", "museum"]:
+                  assert(load("res://assets/room_" + room_id + ".png") is Texture2D)
+              for script_id in ["room_bits", "bit_visuals", "burger_shift"]:
+                  assert(load("res://scripts/" + script_id + ".gd") is Script)
+              assert(not ResourceLoader.exists("res://tests/smoke.gd"))
+              assert(not ResourceLoader.exists("res://preview.png"))
+              game.start_adventure()
+              await process_frame
+              assert(not game.title_is_open())
+              assert(not game.audio.intro_active)
+              game.close_dialogue()
+              var story_score = game.state["score"]
+              var story_flags = game.state["flags"].duplicate(true)
+              var shift = load("res://scripts/burger_shift.gd")
+              game.open_burger_shift()
+              assert(game.burger_is_open())
+              assert(game.burger_choice_buttons.size() == 3)
+              for order in shift.ORDERS:
+                  game.choose_burger_option(order["correct_id"])
+              assert(shift.status(game)["completed"])
+              assert(game.state["inventory"].count("monolith coupon") == 1)
+              game.close_burger_shift()
+              game.perform_action("cook", "Use", "monolith coupon")
+              assert(shift.status(game)["coupon_redeemed"])
+              assert(not game.has_item("monolith coupon"))
+              assert(game.state["score"] == story_score)
+              assert(game.state["flags"] == story_flags)
+              print("PASS: embedded game pack, music, artwork, optional room bits and burger shift")
+              game.queue_free()
+              await process_frame
+              await process_frame
+              await create_timer(0.25).timeout
+              quit()
+          GDSCRIPT
+          env XDG_DATA_HOME="$RUNNER_TEMP/packed-data" timeout 45s "$GODOT" --headless --audio-driver Dummy --path "$RUNNER_TEMP/empty-project" --main-pack "$GITHUB_WORKSPACE/exports/windows/SpaceQuestVII.exe" --script "$RUNNER_TEMP/packed-smoke.gd" 2>&1 | tee "$RUNNER_TEMP/packed.log"
+          if grep -Eq 'SCRIPT ERROR|ERROR:' "$RUNNER_TEMP/packed.log"; then exit 1; fi
+          grep -q 'PASS:' "$RUNNER_TEMP/packed.log"
+
+      - name: Package Windows download
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 https://raw.githubusercontent.com/godotengine/godot/4.4.1-stable/LICENSE.txt -o exports/windows/LICENSE-Godot.txt
+          curl --fail --show-error --silent --location --retry 3 https://raw.githubusercontent.com/godotengine/godot/4.4.1-stable/COPYRIGHT.txt -o exports/windows/COPYRIGHT-Godot.txt
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib
+          import os
+          import struct
+          import zipfile
+          folder = Path("exports/windows")
+          exe = folder / "SpaceQuestVII.exe"
+          binary = exe.read_bytes()
+          assert binary[:2] == b"MZ"
+          pe = struct.unpack_from("<I", binary, 0x3c)[0]
+          assert binary[pe:pe+4] == b"PE\x00\x00"
+          assert struct.unpack_from("<H", binary, pe+4)[0] == 0x8664
+          assert struct.unpack_from("<H", binary, pe+24)[0] == 0x20b
+          assert struct.unpack_from("<H", binary, pe+24+68)[0] == 2
+          assert binary[-4:] == b"GDPC"
+          (folder / "README.txt").write_text(
+              "SPACE QUEST VII: MOPOCALYPSE NOW\n"
+              "Windows edition - Chapter One: The Mop Job\n\n"
+              f"Source revision: {os.environ['GITHUB_SHA']}\n\n"
+              "HOW TO PLAY\n"
+              "1. Extract this entire ZIP into a folder.\n"
+              "2. Double-click SpaceQuestVII.exe. No Godot installation is required.\n"
+              "3. Choose New Game or Continue. The intro music can be skipped immediately.\n\n"
+              "CONTROLS\n"
+              "Left-click the floor to walk; click people to talk and objects to interact.\n"
+              "Right-click an object to inspect it. Click an inventory item, then its target.\n"
+              "Sound or M opens audio controls. F5 saves, F9 loads, and H shows a hint.\n\n"
+              "Tab highlights clickable objects. Explore them for optional jokes.\n\n"
+              "MONOLITH BURGER SIDE QUEST\n"
+              "Click the menu in the diner booth to take Bex's three-order relief shift.\n"
+              "You can retry freely. Use the earned COUPON on Bex to collect your meal.\n"
+              "This optional job does not change the main story's /100 score.\n\n"
+              "REQUIREMENTS\n"
+              "64-bit Windows 10 or 11, with an OpenGL 3.3 compatible graphics driver.\n\n"
+              "Game saves and audio preferences are stored in your Windows user account.\n"
+              "This ZIP contains the game and music together in one executable.\n\n"
+              "Built with Godot Engine 4.4.1. Engine license and third-party notices are\n"
+              "included as LICENSE-Godot.txt and COPYRIGHT-Godot.txt.\n",
+              encoding="utf-8",
+          )
+          archive = Path("exports/SpaceQuestVII-Windows.zip")
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
+              for name in ["SpaceQuestVII.exe", "README.txt", "LICENSE-Godot.txt", "COPYRIGHT-Godot.txt"]:
+                  bundle.write(folder / name, name)
+          with zipfile.ZipFile(archive) as bundle:
+              assert bundle.testzip() is None
+          print("Windows ZIP bytes:", archive.stat().st_size)
+          digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+          Path("exports/SHA256SUMS.txt").write_text(digest + "  SpaceQuestVII-Windows.zip\n", encoding="ascii")
+          print("Windows ZIP SHA256:", digest)
+          PYTHON
+
+      - name: Retain the tested build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SpaceQuestVII-Windows
+          path: |
+            exports/SpaceQuestVII-Windows.zip
+            exports/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish the Windows download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_tag="windows-${GITHUB_SHA:0:12}"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Download **SpaceQuestVII-Windows.zip**, extract it, and double-click **SpaceQuestVII.exe**. Godot is not required.
+
+          This build includes the three-room opening chapter, optional Monolith Burger side quest, interactive jokes, and supplied SQ5/SQ6 introduction recordings. The full story is still in development.
+
+          The source and embedded game pack passed the automated Linux Godot checks. Native Windows launch has not yet been tested here.
+          NOTES
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" exports/SpaceQuestVII-Windows.zip exports/SHA256SUMS.txt --clobber
+            gh release edit "$release_tag" --latest --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$release_tag" exports/SpaceQuestVII-Windows.zip exports/SHA256SUMS.txt --target "$GITHUB_SHA" --title "Space Quest VII - Windows build ${GITHUB_SHA:0:7}" --notes-file "$RUNNER_TEMP/release-notes.md" --latest
+          fi

@@ -4,6 +4,9 @@ extends Node2D
 
 const SAVE_PATH := "user://the_mop_job_save.json"
 const AdventureAudio := preload("res://scripts/audio.gd")
+const RoomBits := preload("res://scripts/room_bits.gd")
+const BitVisuals := preload("res://scripts/bit_visuals.gd")
+const BurgerShift := preload("res://scripts/burger_shift.gd")
 const VERBS := ["Look", "Use", "Talk"]
 const KEY_ACTIONS := ["Interact", "Look", "Use", "Talk"]
 const ROOM_NAMES := {"diner": "ORBITAL DINER", "dock": "SERVICE DOCK 7", "museum": "ARCADA MEMORIAL MUSEUM"}
@@ -12,8 +15,8 @@ const ROOM_INTROS := {
 	"dock": "A dock inspector, a grounded shuttle, and an impressive backlog of paperwork. Home sweet bureaucracy.",
 	"museum": "The museum's priceless navigation archive is guarded by a machine with very strong opinions about cleanliness."
 }
-const INVENTORY_NAMES := {"service chit": "Service chit", "grease": "Fryer grease", "keycard": "Dock keycard", "maintenance pass": "Maintenance pass", "mop": "Service mop", "cleaner": "Ion cleaner", "charged mop": "Charged mop", "star map": "Star map"}
-const ITEM_SHORT := {"service chit": "CHIT", "grease": "GREASE", "keycard": "CARD", "maintenance pass": "PASS", "mop": "MOP", "cleaner": "CLEANER", "charged mop": "ION MOP", "star map": "MAP"}
+const INVENTORY_NAMES := {"service chit": "Service chit", "grease": "Fryer grease", "keycard": "Dock keycard", "maintenance pass": "Maintenance pass", "mop": "Service mop", "cleaner": "Ion cleaner", "charged mop": "Charged mop", "star map": "Star map", "novelty badge": "Souvenir novelty badge", "monolith coupon": "Monolith Burger meal coupon"}
+const ITEM_SHORT := {"service chit": "CHIT", "grease": "GREASE", "keycard": "CARD", "maintenance pass": "PASS", "mop": "MOP", "cleaner": "CLEANER", "charged mop": "ION MOP", "star map": "MAP", "novelty badge": "BADGE", "monolith coupon": "COUPON"}
 const HOTSPOTS := {
 	"diner": {
 		"news": {"rect": Rect2(5, 38, 77, 93), "at": Vector2(102, 267), "name": "News terminal"},
@@ -53,6 +56,7 @@ var show_hotspots := false
 var hovered := ""
 var message := ""
 var textures: Dictionary = {}
+var bit_effects: Array[Dictionary] = []
 var hud: Control
 var status_label: Label
 var room_label: Label
@@ -63,8 +67,9 @@ var inventory_buttons: Dictionary = {}
 var hotspots: Dictionary:
 	get:
 		var result: Dictionary = {}
-		for id in HOTSPOTS[state.get("room", "diner")]:
-			result[id] = HOTSPOTS[state.get("room", "diner")][id]["rect"]
+		var objects := room_hotspots()
+		for id in objects:
+			result[id] = objects[id]["rect"]
 		return result
 var inventory_container: HBoxContainer
 var dialogue_panel: Panel
@@ -88,6 +93,13 @@ var title_continue_button: Button
 var title_sound_button: Button
 var title_status: Label
 var title_buttons: Dictionary = {}
+var burger_shade: ColorRect
+var burger_panel: Panel
+var burger_progress: Label
+var burger_order: Label
+var burger_feedback: Label
+var burger_choice_buttons: Dictionary = {}
+var burger_close_button: Button
 
 func _ready() -> void:
 	audio = AdventureAudio.new()
@@ -128,6 +140,8 @@ func _button(text_value: String, pos: Vector2, size_value: Vector2, callback: Ca
 	button.pressed.connect(func():
 		if sound_is_open() and parent != sound_panel:
 			return
+		if burger_is_open() and parent != burger_panel and parent != sound_panel:
+			return
 		if title_is_open() and parent == hud:
 			return
 		audio.play_sfx("ui_click")
@@ -167,7 +181,7 @@ func _build_ui() -> void:
 		var button := _button(action, Vector2(12 + index * 80, 348), Vector2(76, 34), func(): set_verb(action))
 		button.tooltip_text = str(index + 2) + " — " + action + "; click again for automatic interaction."
 		verb_buttons.append(button)
-	_label("Click to move / interact • Right-click inspect", Vector2(12, 383), Vector2(251, 15), 9)
+	_label("Click to interact • Right-click inspect • Tab hints", Vector2(12, 383), Vector2(251, 15), 9)
 	_label("POCKETS", Vector2(264, 343), Vector2(340, 17), 9)
 	inventory_container = HBoxContainer.new()
 	inventory_container.position = Vector2(264, 361)
@@ -209,7 +223,91 @@ func _build_ui() -> void:
 	sound_button.size = Vector2(50, 22)
 	sound_button.tooltip_text = "Music, effects and ambience — M"
 	_build_title_panel()
+	_build_burger_panel()
 	_build_sound_panel()
+
+func _build_burger_panel() -> void:
+	burger_shade = ColorRect.new()
+	burger_shade.size = Vector2(640, 400)
+	burger_shade.color = Color(0.02, 0.025, 0.035, 0.65)
+	burger_shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	hud.add_child(burger_shade)
+	burger_panel = Panel.new()
+	burger_panel.position = Vector2(28, 45)
+	burger_panel.size = Vector2(584, 308)
+	burger_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	burger_panel.add_theme_stylebox_override("panel", _panel_style(Color("18242c"), Color("e3b266"), 8))
+	burger_shade.add_child(burger_panel)
+	_label("MONOLITH BURGER", Vector2(20, 17), Vector2(440, 30), 24, burger_panel).add_theme_color_override("font_color", Color("f8cd82"))
+	burger_progress = _label("", Vector2(22, 51), Vector2(470, 20), 11, burger_panel)
+	burger_order = _label("", Vector2(22, 91), Vector2(540, 87), 14, burger_panel)
+	burger_order.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	burger_feedback = _label("No timer. No firing. Surprisingly progressive management.", Vector2(22, 244), Vector2(540, 48), 11, burger_panel)
+	burger_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	burger_feedback.add_theme_color_override("font_color", Color("d9c6a3"))
+	burger_close_button = _button("Close", Vector2(491, 17), Vector2(72, 29), close_burger_shift, burger_panel)
+	_label("RELIEF SHIFT • OPTIONAL SIDE QUEST", Vector2(22, 72), Vector2(530, 17), 9, burger_panel).add_theme_color_override("font_color", Color("e3b266"))
+	burger_panel.hide()
+	burger_shade.hide()
+
+func burger_is_open() -> bool:
+	return is_instance_valid(burger_panel) and burger_panel.visible
+
+func open_burger_shift() -> void:
+	if title_is_open() or sound_is_open() or flag("complete"):
+		return
+	close_dialogue()
+	pending_interaction.clear()
+	destination = player
+	audio.update_footsteps(0.0, false)
+	BurgerShift.start(self)
+	burger_feedback.text = "Bex borrowed Monolith Burger's relief-shift tickets. Three orders earn a meal coupon; there is no timer."
+	_refresh_burger_shift()
+	burger_shade.show()
+	burger_panel.show()
+	hovered = ""
+	queue_redraw()
+
+func close_burger_shift() -> void:
+	if is_instance_valid(burger_panel):
+		burger_panel.hide()
+		burger_shade.hide()
+
+func _refresh_burger_shift() -> void:
+	for button in burger_choice_buttons.values():
+		burger_panel.remove_child(button)
+		button.queue_free()
+	burger_choice_buttons.clear()
+	var shift: Dictionary = BurgerShift.status(self)
+	burger_progress.text = str(shift.get("progress", ""))
+	var order: Dictionary = shift.get("order", {})
+	if shift.get("completed", false):
+		burger_order.text = "SHIFT COMPLETE\nYour coupon is ready. Show it to Bex for your staff meal."
+		if shift.get("coupon_redeemed", false):
+			burger_order.text = "SHIFT COMPLETE\nYour meal is collected. The galaxy can have its janitor back."
+	else:
+		burger_order.text = str(order.get("customer", "Customer")) + "\n" + str(order.get("text", ""))
+		var choices: Array = shift.get("choices", [])
+		for index in range(choices.size()):
+			var choice: Dictionary = choices[index]
+			var id: String = choice["id"]
+			var button := _button(str(choice["label"]), Vector2(22 + index * 182, 187), Vector2(174, 43), func(): choose_burger_option(id), burger_panel)
+			button.add_theme_font_size_override("font_size", 11)
+			button.clip_text = true
+			button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			button.tooltip_text = str(choice["label"])
+			button.size = Vector2(174, 43)
+			burger_choice_buttons[id] = button
+
+func choose_burger_option(id: String) -> void:
+	if not burger_is_open() or sound_is_open():
+		return
+	var result: Dictionary = BurgerShift.choose(self, id)
+	burger_feedback.text = str(result.get("message", ""))
+	audio.play_sfx("success" if result.get("accepted", false) else "blocked")
+	_refresh_burger_shift()
+	update_hud()
+	queue_redraw()
 
 func _build_title_panel() -> void:
 	title_shade = ColorRect.new()
@@ -374,6 +472,9 @@ func _input(event: InputEvent) -> void:
 	if sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ESCAPE, KEY_M]:
 		close_sound_panel()
 		get_viewport().set_input_as_handled()
+	elif burger_is_open() and not sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		close_burger_shift()
+		get_viewport().set_input_as_handled()
 	elif title_is_open() and not sound_is_open() and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE]:
 		audio.play_sfx("ui_click")
 		start_adventure()
@@ -381,12 +482,14 @@ func _input(event: InputEvent) -> void:
 
 func new_game(show_intro: bool = true) -> void:
 	close_sound_panel()
+	close_burger_shift()
 	_hide_title()
 	intro_dialogue_active = false
 	state = {"room": "diner", "inventory": [], "flags": {}, "score": 0}
 	player = Vector2(173, 280)
 	destination = player
 	pending_interaction.clear()
+	bit_effects.clear()
 	verb = "Interact"
 	selected = ""
 	dialogue_lines.clear()
@@ -395,7 +498,7 @@ func new_game(show_intro: bool = true) -> void:
 	audio.set_room("diner", true)
 	say("A stolen relic. A suspicious clone. First: get out of the diner.")
 	if show_intro:
-		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to move. Click people to talk and objects to interact; Roger approaches automatically. Right-click an object to inspect it. Select pocket items to use or combine them."])
+		show_dialog("roger", ["The news says a clone wearing your face stole the museum's Mop of Destiny. Your captain says: clear your name before tomorrow's shift.", "Click the floor to walk and objects to interact. Select pocket items to use or combine them; right-click to inspect. Press Tab to reveal things worth poking. There is no extra pay for doing so."])
 	update_hud()
 	queue_redraw()
 
@@ -434,7 +537,7 @@ func remove_item(item: String) -> void:
 		selected = ""
 
 func set_verb(action: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open():
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open():
 		return
 	verb = "Interact" if action == verb or action == "Walk" else action
 	selected = ""
@@ -504,7 +607,7 @@ func update_hud() -> void:
 			var item := str(item_value)
 			var button := _button(str(ITEM_SHORT.get(item, item)), Vector2.ZERO, Vector2.ZERO, func(): select_item(item), inventory_container)
 			button.add_theme_font_size_override("font_size", 9)
-			button.custom_minimum_size = Vector2(48, 27)
+			button.custom_minimum_size = Vector2(44 if items.size() > 5 else 48, 27)
 			button.tooltip_text = str(INVENTORY_NAMES.get(item, item)) + " — click to use; click another item to combine."
 			button.modulate = Color("ffd591") if item == selected else Color.WHITE
 			item_buttons.append(button)
@@ -512,7 +615,7 @@ func update_hud() -> void:
 	queue_redraw()
 
 func select_item(item: String) -> void:
-	if dialogue_panel.visible or sound_is_open() or title_is_open() or not has_item(item):
+	if dialogue_panel.visible or sound_is_open() or title_is_open() or burger_is_open() or not has_item(item):
 		return
 	if selected != "" and selected != item:
 		if combine_items(selected, item):
@@ -543,8 +646,13 @@ func combine_items(first: String, second: String) -> bool:
 
 func _process(delta: float) -> void:
 	elapsed += delta
+	if not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open():
+		for index in range(bit_effects.size() - 1, -1, -1):
+			bit_effects[index]["remaining"] -= delta
+			if bit_effects[index]["remaining"] <= 0.0:
+				bit_effects.remove_at(index)
 	var moving := player.distance_to(destination) > 1.0
-	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not flag("complete")
+	var walking := moving and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not flag("complete")
 	if walking:
 		var old_position := player
 		facing_right = destination.x >= player.x
@@ -557,7 +665,7 @@ func _process(delta: float) -> void:
 	else:
 		audio.update_footsteps(0.0, false)
 	var mouse := get_global_mouse_position()
-	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() else ""
+	hovered = hotspot_at(mouse) if mouse.y > 26 and mouse.y < 318 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() else ""
 	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovered != "" else Input.CURSOR_ARROW)
 	queue_redraw()
 
@@ -565,6 +673,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if sound_is_open():
 		return
 	if title_is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
+			toggle_sound_panel()
+		return
+	if burger_is_open():
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
 			toggle_sound_panel()
 		return
@@ -598,21 +710,49 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			route_right_click(event.position)
 
+func room_hotspots(room: String = "") -> Dictionary:
+	if room == "":
+		room = state.get("room", "diner")
+	var objects: Dictionary = HOTSPOTS.get(room, {}).duplicate()
+	objects.merge(RoomBits.HOTSPOTS.get(room, {}))
+	return objects
+
+func start_bit_effect(id: String) -> void:
+	if not room_hotspots().has(id):
+		return
+	bit_effects.clear()
+	bit_effects.append({"id": id, "room": state["room"], "remaining": 1.4, "duration": 1.4})
+	queue_redraw()
+
+func _draw_bit_effects(room: String) -> void:
+	BitVisuals.render(self, room)
+
+func object_visible(id: String) -> bool:
+	if id == "grease" and (has_item("grease") or flag("hatch_fixed")):
+		return false
+	if id == "mop" and flag("mop_taken"):
+		return false
+	return RoomBits.visible(self, id)
+
 func hotspot_at(point: Vector2) -> String:
 	var room: String = state.get("room", "diner")
 	if point.y < 26 or point.y >= 318:
 		return ""
-	for id in HOTSPOTS[room]:
-		if id == "grease" and (has_item("grease") or flag("hatch_fixed")):
+	var objects := room_hotspots(room)
+	var best := ""
+	var smallest_area := INF
+	for id in objects:
+		if not object_visible(id):
 			continue
-		if id == "mop" and flag("mop_taken"):
-			continue
-		if HOTSPOTS[room][id]["rect"].has_point(point):
-			return str(id)
-	return ""
+		var rect: Rect2 = objects[id]["rect"]
+		# A small prop remains selectable within a larger counter or exhibit.
+		if rect.has_point(point) and rect.get_area() < smallest_area:
+			best = str(id)
+			smallest_area = rect.get_area()
+	return best
 
 func route_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -624,11 +764,11 @@ func route_click(point: Vector2) -> void:
 		pending_interaction.clear()
 		destination = Vector2(clampf(point.x, 25, 615), clampf(point.y, 257, 306))
 		return
-	var action := "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb)
+	var action := "Use" if selected != "" else action_for(id)
 	queue_world_action(id, action, selected)
 
 func route_right_click(point: Vector2) -> void:
-	if sound_is_open() or title_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open():
 		return
 	if dialogue_panel.visible:
 		_advance_dialog()
@@ -649,20 +789,33 @@ func reset_interaction() -> void:
 	update_hud()
 
 func default_action(id: String) -> String:
+	if id.begins_with("bit_"):
+		return RoomBits.default_action(id)
 	if id in ["news", "kiosk"]:
 		return "Look"
-	if id in ["cook", "counter", "guard", "guardian"]:
+	if is_character(id):
 		return "Talk"
 	return "Use"
+
+func is_character(id: String) -> bool:
+	return id in ["cook", "guard", "guardian"]
+
+func action_for(id: String) -> String:
+	var action := default_action(id) if verb == "Interact" else verb
+	return default_action(id) if action == "Talk" and not is_character(id) else action
 
 func contextual_action_label(id: String) -> String:
 	if selected != "":
 		return "Use " + str(INVENTORY_NAMES.get(selected, selected)) + " on"
-	var action := default_action(id) if verb == "Interact" else verb
+	var action := action_for(id)
 	if action == "Look":
 		return "Inspect"
 	if action == "Talk":
 		return "Talk to"
+	if id == "counter":
+		return "Interact with"
+	if id.begins_with("bit_"):
+		return str(room_hotspots()[id].get("use_label", "Use"))
 	if id in ["grease", "mop"] or (id == "plinth" and not flag("archive_taken")):
 		return "Pick up"
 	if id in ["exit", "museum"]:
@@ -672,9 +825,10 @@ func contextual_action_label(id: String) -> String:
 	return "Use"
 
 func queue_world_action(id: String, action: String, item: String = "") -> void:
-	if not HOTSPOTS[state["room"]].has(id):
+	var objects := room_hotspots()
+	if not objects.has(id) or not object_visible(id):
 		return
-	var data: Dictionary = HOTSPOTS[state["room"]][id]
+	var data: Dictionary = objects[id]
 	destination = data["at"]
 	pending_interaction = {"id": id, "verb": action, "item": item}
 	if player.distance_to(destination) < 1:
@@ -682,19 +836,31 @@ func queue_world_action(id: String, action: String, item: String = "") -> void:
 		perform_action(id, action, item)
 
 func interact(id: String) -> void:
-	perform_action(id, "Use" if selected != "" else (default_action(id) if verb == "Interact" else verb), selected)
+	perform_action(id, "Use" if selected != "" else action_for(id), selected)
 
 func perform_action(id: String, action: String = "Use", item: String = "") -> void:
-	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open():
+	if state.is_empty() or flag("complete") or sound_is_open() or title_is_open() or burger_is_open():
 		return
 	if item == "" and action in ["Use", "Interact"]:
 		item = selected
 	if action == "Interact":
 		action = "Use" if item != "" else default_action(id)
+	if action == "Talk" and not is_character(id):
+		action = "Use" if item != "" else default_action(id)
 	var room: String = state["room"]
-	if not HOTSPOTS[room].has(id):
+	var objects := room_hotspots(room)
+	if not objects.has(id):
 		say("That object isn't in this room.")
 		audio.play_sfx("blocked")
+		return
+	if action == "Use" and id in ["cook", "counter"] and item == "monolith coupon":
+		var reward: Dictionary = BurgerShift.redeem(self)
+		show_dialog("cook", [str(reward.get("message", ""))])
+		update_hud()
+		return
+	if action != "Walk" and RoomBits.handle(self, room, id, action, item):
+		update_hud()
+		queue_redraw()
 		return
 	if action == "Look":
 		inspect_object(id)
@@ -702,7 +868,7 @@ func perform_action(id: String, action: String = "Use", item: String = "") -> vo
 		if id in ["exit", "museum", "shuttle"]:
 			use_object(id, "")
 		else:
-			say("Standing beside " + str(HOTSPOTS[room][id]["name"]) + ". Choose Look, Use, or Talk.")
+			say("Standing beside " + str(objects[id]["name"]) + ". Choose Look, Use, or Talk.")
 	elif action == "Talk":
 		talk_to(id)
 	elif action == "Use":
@@ -718,6 +884,9 @@ func inspect_object(id: String) -> void:
 	show_dialog("roger", [descriptions[state["room"]].get(id, "Worth another look.")])
 
 func talk_to(id: String) -> void:
+	if not is_character(id):
+		perform_action(id, default_action(id))
+		return
 	match state["room"] + ":" + id:
 		"diner:cook", "diner:counter":
 			if not flag("cook_help"):
@@ -876,6 +1045,7 @@ func use_object(id: String, item: String) -> void:
 func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> void:
 	if not ROOM_NAMES.has(room):
 		return
+	close_burger_shift()
 	if state.get("room", "") != room:
 		audio.play_sfx("door")
 	state["room"] = room
@@ -884,6 +1054,7 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	player = position_value
 	destination = player
 	pending_interaction.clear()
+	bit_effects.clear()
 	selected = ""
 	verb = "Interact"
 	dialogue_lines.clear()
@@ -892,7 +1063,7 @@ func enter_room(room: String, position_value: Vector2 = Vector2(170, 280)) -> vo
 	update_hud()
 
 func give_hint() -> void:
-	if sound_is_open() or title_is_open():
+	if sound_is_open() or title_is_open() or burger_is_open():
 		return
 	var hint := "The courier is ready. Click the shuttle in the dock to board."
 	if not flag("cook_help"):
@@ -961,6 +1132,8 @@ func load_game() -> bool:
 		audio.play_sfx("blocked")
 		return false
 	state = snapshot
+	close_burger_shift()
+	bit_effects.clear()
 	state.erase("player")
 	state["score"] = int(state.get("score", 0))
 	# Earlier checkpoints granted the mop when the locker opened. Preserve that
@@ -993,23 +1166,22 @@ func _draw() -> void:
 	else:
 		_draw_fallback_room(room)
 	_draw_scene_props(room)
+	_draw_bit_effects(room)
 	_draw_player()
 	draw_rect(Rect2(0, 0, 640, 26), Color("0c1c2a"))
 	draw_line(Vector2(0, 25), Vector2(640, 25), Color("7c6749"))
 	draw_rect(Rect2(0, 318, 640, 82), Color("0c1c2a"))
 	draw_line(Vector2(0, 318), Vector2(640, 318), Color("7c6749"))
 	if show_hotspots:
-		for id in HOTSPOTS[room]:
-			if id == "grease" and (has_item("grease") or flag("hatch_fixed")):
+		var objects := room_hotspots(room)
+		for id in objects:
+			if not object_visible(id):
 				continue
-			if id == "mop" and flag("mop_taken"):
-				continue
-			var rect: Rect2 = HOTSPOTS[room][id]["rect"]
+			var rect: Rect2 = objects[id]["rect"]
 			draw_rect(rect, Color(0.94, 0.79, 0.48, 0.38), false, 1)
-			var label: String = HOTSPOTS[room][id]["name"]
-			draw_string(ThemeDB.fallback_font, rect.position + Vector2(2, 13), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("ffe7ad"))
+			# Names appear on hover; dozens of overlapping labels obscure the art.
 	if hovered != "" and not dialogue_panel.visible:
-		var data: Dictionary = HOTSPOTS[room][hovered]
+		var data: Dictionary = room_hotspots(room)[hovered]
 		var rect: Rect2 = data["rect"]
 		var label := contextual_action_label(hovered) + "  " + str(data["name"])
 		var label_width := ThemeDB.fallback_font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16
@@ -1023,10 +1195,11 @@ func _draw_fallback_room(room: String) -> void:
 	for i in range(9):
 		draw_line(Vector2(i * 80, 26), Vector2(i * 80, 318), Color(0.1, 0.14, 0.2, 0.3), 2)
 	draw_rect(Rect2(0, 249, 640, 69), Color("343d4a"))
-	for id in HOTSPOTS[room]:
-		var rect: Rect2 = HOTSPOTS[room][id]["rect"]
+	var objects := room_hotspots(room)
+	for id in objects:
+		var rect: Rect2 = objects[id]["rect"]
 		draw_rect(rect, Color(0.07, 0.1, 0.15, 0.5))
-		draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 16), HOTSPOTS[room][id]["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("d8e2e7"))
+		draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 16), objects[id]["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("d8e2e7"))
 
 func _draw_scene_props(room: String) -> void:
 	# Small diegetic indicators keep puzzle objects legible over detailed artwork.
@@ -1070,7 +1243,7 @@ func draw_ellipse(rect: Rect2, color: Color) -> void:
 	draw_colored_polygon(points, color)
 
 func _draw_player() -> void:
-	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not flag("complete")
+	var moving := player.distance_to(destination) > 1.0 and not dialogue_panel.visible and not sound_is_open() and not title_is_open() and not burger_is_open() and not flag("complete")
 	var bob := sin(elapsed * 11) * 1.2 if moving else sin(elapsed * 1.7) * 0.3
 	var perspective_height := lerpf(105.0, 140.0, clampf((player.y - 257.0) / 49.0, 0.0, 1.0))
 	draw_ellipse(Rect2(player.x - 22, player.y - 4, 45, 10), Color(0.01, 0.015, 0.025, 0.45))

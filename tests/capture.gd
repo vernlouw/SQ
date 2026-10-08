@@ -14,6 +14,9 @@ func capture() -> void:
 	var portrait := false
 	var title := false
 	var sound := false
+	var bits := false
+	var burger := false
+	var interaction := ""
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--room="):
 			room_id = argument.trim_prefix("--room=")
@@ -25,6 +28,12 @@ func capture() -> void:
 			title = true
 		elif argument == "--sound":
 			sound = true
+		elif argument == "--bits":
+			bits = true
+		elif argument == "--burger":
+			burger = true
+		elif argument.begins_with("--interact="):
+			interaction = argument.trim_prefix("--interact=")
 	if room_id not in ["diner", "dock", "museum"]:
 		push_error("Unknown room: " + room_id)
 		quit(1)
@@ -41,6 +50,18 @@ func capture() -> void:
 		game.enter_room(room_id)
 	if portrait and not title:
 		game.perform_action("cook" if room_id == "diner" else "guard" if room_id == "dock" else "guardian", "Talk")
+	if bits and not title:
+		game.show_hotspots = true
+	if not interaction.is_empty() and not title:
+		if not game.room_hotspots(room_id).has(interaction):
+			push_error("Unknown interaction for " + room_id + ": " + interaction)
+			quit(1)
+			return
+		game.close_dialogue()
+		game.perform_action(interaction, game.default_action(interaction))
+	if burger and not title:
+		game.close_dialogue()
+		game.open_burger_shift()
 	if sound:
 		game.toggle_sound_panel()
 	# Allow the imported textures and Control layout to reach the render server.
